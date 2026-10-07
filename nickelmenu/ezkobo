@@ -1,0 +1,5 @@
+# EzKobo — optional NickelMenu entries (https://pgaskin.net/NickelMenu/)
+# EzKobo starts by itself; these are only for checking on it.
+
+menu_item :main :EzKobo status :cmd_output :9500 :/usr/local/ezkobo/ezkobo start
+menu_item :main :Import new books :nickel_misc :rescan_books

@@ -1,0 +1,12 @@
+# Go / Kobo build output
+/build/
+/dist/
+/tmp/
+
+# Xcode
+/ios/build/
+/ios/EzKobo.xcodeproj/
+xcuserdata/
+.DS_Store
+/.cache/
+/ios/Team.local

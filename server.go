@@ -1,0 +1,439 @@
+package main
+
+import (
+	"context"
+	_ "embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+//go:embed web/index.html
+var indexHTML []byte
+
+// Formats Kobo's stock reader can open.
+var bookExts = map[string]bool{
+	".epub": true, ".pdf": true, ".mobi": true, ".cbz": true, ".cbr": true,
+	".txt": true, ".html": true, ".htm": true, ".rtf": true,
+	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".bmp": true, ".tif": true, ".tiff": true,
+}
+
+type server struct {
+	cfg      config
+	mu       sync.Mutex
+	lastSeen time.Time
+	active   int
+	rescanMu sync.Mutex
+}
+
+func serve(cfg config) error {
+	// Both logs are size-capped; stderr goes nowhere when started by "start".
+	writers := []io.Writer{os.Stderr, &appendLog{path: cfg.logfile}}
+	if cfg.onboardLog != "" {
+		writers = append(writers, &appendLog{path: cfg.onboardLog})
+	}
+	log.SetOutput(io.MultiWriter(writers...))
+
+	// Take the port first: if another copy is already running, quit before
+	// announcing anything (a second copy's mDNS goodbye would make phones
+	// forget the Kobo) and without touching the running copy's pid file.
+	ln, err := net.Listen("tcp", cfg.addr)
+	if err != nil {
+		log.Printf("ezkobo: not starting, %s is in use (already running?): %v", cfg.addr, err)
+		return nil
+	}
+	os.WriteFile(cfg.pidfile, []byte(strconv.Itoa(os.Getpid())), 0o644)
+	defer os.Remove(cfg.pidfile)
+
+	s := &server{cfg: cfg, lastSeen: time.Now()}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", s.index)
+	mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") })
+	mux.HandleFunc("GET /api/info", s.track(s.info))
+	mux.HandleFunc("GET /api/books", s.track(s.listBooks))
+	mux.HandleFunc("PUT /api/books/{name}", s.track(s.putBook))
+	mux.HandleFunc("DELETE /api/books/{path...}", s.track(s.deleteBook))
+	mux.HandleFunc("POST /api/rescan", s.track(s.rescan))
+
+	srv := &http.Server{Handler: logRequests(mux), ReadHeaderTimeout: 30 * time.Second}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	svc := &mdnsService{
+		host:     strings.ToLower(cfg.host) + ".local",
+		instance: strings.ReplaceAll(cfg.name, ".", "-"),
+		port:     listenPort(cfg.addr),
+		model:    cfg.model,
+	}
+	mdnsDone := make(chan struct{})
+	go func() { runMDNS(ctx, svc); close(mdnsDone) }()
+	if cfg.idle > 0 {
+		go s.idleWatch(ctx, cancel)
+	}
+	go func() {
+		<-ctx.Done()
+		sctx, c := context.WithTimeout(context.Background(), 5*time.Second)
+		defer c()
+		srv.Shutdown(sctx)
+	}()
+
+	log.Printf("ezkobo: started (pid %d) as %q, serving %s on %s, addresses %v",
+		os.Getpid(), cfg.name, cfg.dir, cfg.addr, localIPv4s())
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	select { // let mDNS send its goodbye
+	case <-mdnsDone:
+	case <-time.After(4 * time.Second):
+	}
+	log.Printf("ezkobo: stopped")
+	return nil
+}
+
+// logRequests logs each API request (not health checks) for debugging.
+func logRequests(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/ping" {
+			log.Printf("ezkobo: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// appendLog appends each write to a file, opening and closing it every time
+// so no file stays open on /mnt/onboard (which would block USB mass storage).
+// Writes fail silently while the storage is unmounted.
+type appendLog struct {
+	path string
+	mu   sync.Mutex
+}
+
+func (l *appendLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if fi, err := os.Stat(l.path); err == nil && fi.Size() > 256<<10 {
+		os.Rename(l.path, l.path+".old")
+	}
+	os.MkdirAll(filepath.Dir(l.path), 0o755)
+	if f, err := os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		f.Write(p)
+		f.Close()
+	}
+	return len(p), nil
+}
+
+// track records activity so the idle watcher doesn't stop mid-transfer.
+func (s *server) track(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		s.active++
+		s.lastSeen = time.Now()
+		s.mu.Unlock()
+		defer func() {
+			s.mu.Lock()
+			s.active--
+			s.lastSeen = time.Now()
+			s.mu.Unlock()
+		}()
+		h(w, r)
+	}
+}
+
+func (s *server) idleWatch(ctx context.Context, stop context.CancelFunc) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.mu.Lock()
+			idle := s.active == 0 && time.Since(s.lastSeen) > s.cfg.idle
+			s.mu.Unlock()
+			if idle {
+				log.Printf("ezkobo: idle for %s, shutting down", s.cfg.idle)
+				stop()
+				return
+			}
+		}
+	}
+}
+
+func (s *server) index(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	s.lastSeen = time.Now()
+	s.mu.Unlock()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(indexHTML)
+}
+
+type book struct {
+	Name  string `json:"name"`
+	Size  int64  `json:"size"`
+	MTime int64  `json:"mtime"` // unix seconds
+}
+
+func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
+	books, err := s.allBooks()
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	sort.Slice(books, func(i, j int) bool { return books[i].MTime > books[j].MTime })
+	free, _ := s.space()
+	writeJSON(w, map[string]any{"books": books, "free": free, "dir": s.cfg.dir})
+}
+
+// libraryRoot is where books are listed from: the whole user storage, so
+// books not sent by EzKobo show up too. Falls back to the upload folder
+// when running off-device.
+func (s *server) libraryRoot() string {
+	if _, err := os.Stat(s.cfg.library); err == nil {
+		return s.cfg.library
+	}
+	return s.cfg.dir
+}
+
+// allBooks returns every book under the library root, named by its path
+// relative to the root ("Books/Dune.epub"). Hidden folders (.kobo, .adds…)
+// and KOReader's .sdr sidecar folders are skipped.
+func (s *server) allBooks() ([]book, error) {
+	root := s.libraryRoot()
+	books := []book{}
+	err := filepath.WalkDir(root, func(p string, e os.DirEntry, err error) error {
+		if err != nil {
+			if p == root && errors.Is(err, os.ErrNotExist) {
+				return filepath.SkipAll
+			}
+			return nil // unreadable entry: skip it, keep going
+		}
+		name := e.Name()
+		if p != root && strings.HasPrefix(name, ".") {
+			if e.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if e.IsDir() {
+			if strings.HasSuffix(strings.ToLower(name), ".sdr") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !isBook(name) {
+			return nil
+		}
+		if fi, err := e.Info(); err == nil {
+			rel, _ := filepath.Rel(root, p)
+			books = append(books, book{filepath.ToSlash(rel), fi.Size(), fi.ModTime().Unix()})
+		}
+		return nil
+	})
+	return books, err
+}
+
+func (s *server) info(w http.ResponseWriter, r *http.Request) {
+	d := readDevice()
+	free, total := s.space()
+	books, _ := s.allBooks()
+	bat := readBattery()
+	if s.cfg.demo {
+		if n := len(s.cfg.name); n >= 4 {
+			d.Serial = s.cfg.name[n-4:]
+		}
+		level := 0
+		for _, c := range s.cfg.name {
+			level += int(c)
+		}
+		bat = &battery{Level: 55 + level%40}
+	}
+	writeJSON(w, map[string]any{
+		"name":     s.cfg.name,
+		"model":    s.cfg.model,
+		"serial":   d.Serial,
+		"firmware": d.Firmware,
+		"battery":  bat,
+		"free":     free,
+		"total":    total,
+		"books":    len(books),
+	})
+}
+
+// space reports free and total bytes of the storage holding the books folder.
+func (s *server) space() (free, total uint64) {
+	if s.cfg.demo {
+		return 24_300_000_000, 29_800_000_000
+	}
+	for dir := s.cfg.dir; ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(dir); err == nil || dir == filepath.Dir(dir) {
+			return diskSpace(dir)
+		}
+	}
+}
+
+func (s *server) putBook(w http.ResponseWriter, r *http.Request) {
+	name, err := cleanName(r.PathValue("name"))
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	dst := filepath.Join(s.cfg.dir, name)
+	if fi, err := os.Stat(dst); err == nil && r.ContentLength >= 0 && fi.Size() == r.ContentLength {
+		writeJSON(w, map[string]any{"name": name, "skipped": true})
+		return
+	}
+	dst = uniquePath(dst)
+
+	os.MkdirAll(s.cfg.dir, 0o755)
+	tmp, err := os.CreateTemp(s.cfg.dir, ".ezkobo-*.part")
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	defer os.Remove(tmp.Name())
+
+	// FAT32 can't hold files of 4 GiB or more.
+	n, err := io.Copy(tmp, http.MaxBytesReader(w, r.Body, 4<<30-1))
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		os.Chmod(tmp.Name(), 0o644)
+		err = os.Rename(tmp.Name(), dst)
+	}
+	if err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	log.Printf("ezkobo: received %s (%d bytes)", filepath.Base(dst), n)
+	toast("Received " + filepath.Base(dst))
+	writeJSON(w, map[string]any{"name": filepath.Base(dst), "size": n})
+}
+
+func (s *server) deleteBook(w http.ResponseWriter, r *http.Request) {
+	rel, err := cleanRelPath(r.PathValue("path"))
+	if err != nil {
+		httpError(w, err, http.StatusBadRequest)
+		return
+	}
+	p := filepath.Join(s.libraryRoot(), filepath.FromSlash(rel))
+	if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() {
+		httpError(w, errors.New("no such book"), http.StatusNotFound)
+		return
+	}
+	if err := os.Remove(p); err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	log.Printf("ezkobo: deleted %s", rel)
+	writeJSON(w, map[string]any{"deleted": rel})
+}
+
+// cleanRelPath validates a book path relative to the library root: no
+// escaping the root, no hidden folders, and it must be a book.
+func cleanRelPath(p string) (string, error) {
+	p = path.Clean("/" + strings.ReplaceAll(p, `\`, "/"))[1:]
+	if p == "" {
+		return "", errors.New("invalid path")
+	}
+	for _, part := range strings.Split(p, "/") {
+		if strings.HasPrefix(part, ".") {
+			return "", errors.New("invalid path")
+		}
+	}
+	if !isBook(p) {
+		return "", fmt.Errorf("%s: not a book", p)
+	}
+	return p, nil
+}
+
+func (s *server) rescan(w http.ResponseWriter, r *http.Request) {
+	s.rescanMu.Lock()
+	defer s.rescanMu.Unlock()
+	method, err := rescanLibrary(s.cfg.rescan)
+	if err != nil {
+		log.Printf("ezkobo: rescan: %v", err)
+	}
+	writeJSON(w, map[string]any{"method": method, "ok": err == nil})
+}
+
+// cleanName turns a client-supplied file name into a safe FAT32 file name
+// inside the books folder.
+func cleanName(n string) (string, error) {
+	n = path.Base(strings.ReplaceAll(n, `\`, "/"))
+	n = strings.Map(func(r rune) rune {
+		if r < 32 || strings.ContainsRune(`<>:"/\|?*`, r) {
+			return '_'
+		}
+		return r
+	}, n)
+	n = strings.TrimSpace(strings.TrimRight(n, ". "))
+	if n == "" || strings.HasPrefix(n, ".") {
+		return "", errors.New("invalid file name")
+	}
+	if !isBook(n) {
+		return "", fmt.Errorf("%s: not a format Kobo can open", n)
+	}
+	if ext := filepath.Ext(n); len(n) > 200 {
+		n = strings.ToValidUTF8(n[:200-len(ext)], "") + ext
+	}
+	return n, nil
+}
+
+func listenPort(addr string) int {
+	_, p, _ := net.SplitHostPort(addr)
+	n, _ := strconv.Atoi(p)
+	return n
+}
+
+func isBook(name string) bool {
+	return bookExts[strings.ToLower(filepath.Ext(name))]
+}
+
+// uniquePath returns p, or "name (2).ext" etc. if p already exists.
+func uniquePath(p string) string {
+	if _, err := os.Stat(p); err != nil {
+		return p
+	}
+	ext := filepath.Ext(p)
+	stem := strings.TrimSuffix(p, ext)
+	if strings.HasSuffix(strings.ToLower(stem), ".kepub") {
+		ext = stem[len(stem)-6:] + ext
+		stem = stem[:len(stem)-6]
+	}
+	for i := 2; ; i++ {
+		q := fmt.Sprintf("%s (%d)%s", stem, i, ext)
+		if _, err := os.Stat(q); err != nil {
+			return q
+		}
+	}
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+
+func httpError(w http.ResponseWriter, err error, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}

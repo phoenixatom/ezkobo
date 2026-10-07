@@ -1,0 +1,68 @@
+name: EzKobo
+options:
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+    CODE_SIGN_STYLE: Automatic
+    # Your Apple team ID, from the EZKOBO_TEAM environment variable (`make app`
+    # reads it from ios/Team.local). Leave unset to pick a team in Xcode.
+    DEVELOPMENT_TEAM: "${EZKOBO_TEAM}"
+
+# Both targets need these to browse the local network and talk plain HTTP to it.
+localNetwork: &localNetwork
+  NSLocalNetworkUsageDescription: EzKobo looks for Kobo e-readers on your Wi-Fi so you can send them books.
+  NSBonjourServices: [_ezkobo._tcp]
+  NSAppTransportSecurity:
+    NSAllowsLocalNetworking: true
+  CFBundleShortVersionString: $(MARKETING_VERSION)
+  CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+
+targets:
+  EzKobo:
+    type: application
+    platform: iOS
+    sources: [App, Shared]
+    info:
+      path: App/Info.plist
+      properties:
+        <<: *localNetwork
+        CFBundleDisplayName: EzKobo
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.ezkobo.app
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - target: ShareExtension
+
+  ShareExtension:
+    type: app-extension
+    platform: iOS
+    sources: [ShareExtension, Shared]
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        <<: *localNetwork
+        CFBundleDisplayName: EzKobo
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            # Show for EPUB/KEPUB, PDF and comic archives (CBZ/CBR).
+            NSExtensionActivationRule: >-
+              SUBQUERY(extensionItems, $item, SUBQUERY($item.attachments, $a,
+              ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "org.idpf.epub-container"
+              OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf"
+              OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.archive"
+              ).@count >= 1).@count >= 1
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.ezkobo.app.share
