@@ -71,27 +71,42 @@ frozen while the Kobo sleeps.
 ## Install on a Kobo
 
 > [!WARNING]
-> EzKobo installs a small program on your Kobo's system
-> storage. It's tested on a Clara Colour (firmware 4.45) and designed for
-> ARMv7 Kobos on firmware 4.x. The install backs your Kobo up first; use it at
-> your own risk.
+> EzKobo installs a small program on your Kobo's system storage. It's tested
+> on a Clara Colour (firmware 4.45) and designed for ARMv7 Kobos on firmware
+> 4.x. Back up your Kobo first (`make install-kobo` does it for you) and use
+> it at your own risk.
 
-Plug the Kobo into your Mac, tap **Connect** on the Kobo (close KOReader
-first), and run:
+### Download (no tools needed)
+
+1. From the [latest release](https://github.com/phoenixatom/ezkobo/releases/latest),
+   download **`KoboRoot-with-NickelMenu.tgz`** if your Kobo doesn't have
+   [NickelMenu](https://pgaskin.net/NickelMenu/) yet, otherwise
+   **`KoboRoot.tgz`**.
+2. Connect the Kobo to your computer and copy your whole Kobo drive somewhere
+   as a backup (include the hidden `.kobo` folder).
+3. Rename the download to `KoboRoot.tgz` if needed, copy it into the hidden
+   `.kobo` folder on the Kobo (⌘⇧. shows hidden folders on a Mac), and eject.
+   If a `KoboRoot.tgz` is already there, another update is waiting: restart
+   the Kobo first.
+
+The Kobo installs EzKobo and restarts.
+
+### From source (Mac)
+
+Plug the Kobo in, tap **Connect** on the Kobo (close KOReader first), and run:
 
 ```sh
 make install-kobo
 ```
 
-This backs the Kobo up to `~/Kobo Backups/`, copies `KoboRoot.tgz` into its
-`.kobo` folder, and ejects it. Unplug it: the Kobo installs EzKobo and
-restarts. With several Kobos plugged in, it installs on each.
+This backs the Kobo up to `~/Kobo Backups/`, copies the right package into its
+`.kobo` folder (adding NickelMenu if it's missing), and ejects it. Unplug it:
+the Kobo installs EzKobo and restarts. With several Kobos plugged in, it
+installs on each.
 
-If the Kobo doesn't have [NickelMenu](https://pgaskin.net/NickelMenu/), it's
-installed too: its **Import new books** menu item is how sent books get into
-the library. NickelMenu doesn't support firmware 5.x yet; there EzKobo is
-installed alone and books still arrive, but importing them needs a USB
-connection.
+NickelMenu provides the **Import new books** menu item that gets sent books
+into the library. It doesn't support firmware 5.x yet; there, install EzKobo
+alone: books still arrive, but importing them needs a USB connection.
 
 **Remove:** `make uninstall-kobo` (or create a folder named `ezkobo-uninstall`
 at the top of the Kobo drive), eject, and restart the Kobo.
