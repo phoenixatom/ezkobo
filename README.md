@@ -169,6 +169,19 @@ The agent has no authentication: anyone on the same Wi‑Fi can list, send and
 delete books while the Kobo's Wi‑Fi is on. Fine at home; be careful on shared
 networks.
 
+## Roadmap
+
+- [ ] **Convert to KEPUB on send.** EPUBs become Kobo's native KEPUB format
+  for faster page turns, reading stats and better fonts.
+- [ ] **Fetch metadata.** Fill in title, author, series and cover from Open
+  Library or Google Books when a file has missing or messy metadata.
+- [ ] **Clean file names.** Name sent books "Author - Title.epub" from their
+  metadata.
+- [ ] **Show library status.** Mark books that are on the Kobo but not yet in
+  its library, and show real titles and authors from the Kobo's database.
+- [ ] **Optional PIN.** Require a code shown on the Kobo before a phone can
+  send or delete books, for shared networks.
+
 ## Development
 
 ```sh
