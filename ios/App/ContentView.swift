@@ -1,5 +1,7 @@
 import SwiftUI
 
+/// Home: the selected Kobo, what's being read, stats, and the way into the
+/// library. Switch Kobos from the title menu.
 struct ContentView: View {
     @StateObject private var finder = KoboFinder()
     @StateObject private var transfers = TransferQueue()
@@ -9,7 +11,6 @@ struct ContentView: View {
     @State private var summary: ReadingSummary?
     @State private var booksError: String?
     @State private var choosingFiles = false
-    @State private var query = ""
     @State private var showSettings = false
     /// The Kobo that asked for a PIN, and the files to send once it's entered.
     @State private var pinPrompt: Kobo?
@@ -21,30 +22,31 @@ struct ContentView: View {
         finder.kobos.first { $0.id == selectedID } ?? finder.kobos.first
     }
 
+    private func model(_ kobo: Kobo) -> String { finder.info[kobo.id]?.model ?? kobo.model }
+
     var body: some View {
         NavigationStack {
-            List {
-                if !transfers.items.isEmpty {
-                    transferSection
-                        .transition(.opacity)
-                }
-                if !finder.kobos.isEmpty {
-                    koboSection
-                }
-                if let selected, let summary {
-                    readingSection(selected, summary)
-                }
+            ScrollView {
                 if let selected {
-                    librarySection(selected)
+                    home(selected)
+                } else {
+                    searchingView
+                        .padding(.top, 90)
                 }
             }
-            .navigationTitle("EzKobo")
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle(selected.map(model) ?? "EzKobo")
+            .navigationSubtitle(subtitle)
             .toolbarTitleDisplayMode(.inlineLarge)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic),
-                        prompt: "Search Books")
-            .overlay {
-                if finder.kobos.isEmpty {
-                    searchingView
+            .toolbarTitleMenu {
+                if finder.kobos.count > 1 {
+                    ForEach(finder.kobos) { kobo in
+                        Button {
+                            selectedID = kobo.id
+                        } label: {
+                            Label(menuLabel(kobo), systemImage: kobo.id == selected?.id ? "checkmark" : "")
+                        }
+                    }
                 }
             }
             .refreshable { await reload() }
@@ -53,13 +55,23 @@ struct ContentView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Settings", systemImage: "gearshape") { showSettings = true }
                     }
-                    ToolbarItem(placement: .bottomBar) {
-                        Button("Send to \(finder.info[selected!.id]?.model ?? selected!.model)") {
-                            choosingFiles = true
-                        }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(transfers.isRunning)
+                }
+            }
+            .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .safeAreaBar(edge: .bottom) {
+                if selected != nil {
+                    Button {
+                        choosingFiles = true
+                    } label: {
+                        Label("Send Books", systemImage: "plus")
+                            .font(.headline)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
                     }
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.large)
+                    .disabled(transfers.isRunning)
+                    .padding(.bottom, 8)
                 }
             }
             .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.data],
@@ -70,13 +82,12 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showSettings, onDismiss: { Task { await loadBooks() } }) {
                 if let selected {
-                    SettingsView(kobo: selected, model: finder.info[selected.id]?.model ?? selected.model,
-                                 finder: finder)
+                    SettingsView(kobo: selected, model: model(selected), finder: finder)
                 }
             }
             .sheet(item: $pinPrompt) { kobo in
                 PINEntryView(title: "Enter PIN",
-                             message: "\(finder.info[kobo.id]?.model ?? kobo.model) has a PIN. You can see it under EzKobo status in the Kobo’s menu.",
+                             message: "\(model(kobo)) has a PIN. You can see it under EzKobo status in the Kobo’s menu.",
                              button: "Unlock") { pin in
                     await unlock(kobo, with: pin)
                 }
@@ -89,140 +100,126 @@ struct ContentView: View {
         }
     }
 
-    private var filteredBooks: [Book] {
-        query.isEmpty ? books : books.filter {
-            $0.displayTitle.localizedStandardContains(query) || ($0.author ?? "").localizedStandardContains(query)
-        }
-    }
+    // MARK: Home
 
-    // MARK: Sections
-
-    private var koboSection: some View {
-        Section {
-            ForEach(finder.kobos) { kobo in
-                Button {
-                    selectedID = kobo.id
-                } label: {
-                    KoboRow(kobo: kobo, info: finder.info[kobo.id],
-                            reachable: !finder.unreachable.contains(kobo.id),
-                            selected: kobo.id == selected?.id && finder.kobos.count > 1)
-                }
-                .tint(.primary)
+    private func home(_ kobo: Kobo) -> some View {
+        VStack(spacing: 14) {
+            if !transfers.items.isEmpty {
+                TransferCard(queue: transfers)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(.bottom, 10)
             }
-        } header: {
-            Text(finder.kobos.count > 1 ? "Send To" : "Kobo")
-        }
-    }
 
-    private func librarySection(_ kobo: Kobo) -> some View {
-        Section {
-            if let booksError {
-                Text(booksError)
-                    .foregroundStyle(.secondary)
-            } else if books.isEmpty {
-                Text("Books you send will appear here.")
-                    .foregroundStyle(.secondary)
-            } else if filteredBooks.isEmpty {
-                Text("No books match “\(query)”.")
-                    .foregroundStyle(.secondary)
+            if finder.unreachable.contains(kobo.id) {
+                MascotMessage(title: "\(model(kobo)) Is Asleep",
+                              message: "Wake it up and turn on Wi‑Fi to send books and see your reading.",
+                              size: 150)
+                    .padding(.vertical, 30)
+            } else if let booksError {
+                VStack(spacing: 18) {
+                    MascotMessage(title: "Couldn’t Load Books", message: booksError, size: 150)
+                    Button("Try Again") { Task { await reload() } }
+                        .buttonStyle(.glass)
+                }
+                .padding(.vertical, 30)
             } else {
-                ForEach(filteredBooks, id: \.listID) { book in
-                    bookLink(book)
-                        .swipeActions {
-                            Button("Delete", systemImage: "trash", role: .destructive) {
-                                Task { await delete(book, from: kobo) }
-                            }
-                        }
-                }
-            }
-        } header: {
-            Text("On \(finder.info[kobo.id]?.model ?? kobo.model)")
-        } footer: {
-            if books.contains(where: { $0.inLibrary == false }) {
-                Text(BookName.importHint)
+                readingCards(kobo)
+                libraryCard(kobo)
             }
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 24)
+        .animation(.default, value: transfers.items.isEmpty)
     }
 
-    private func readingSection(_ kobo: Kobo, _ summary: ReadingSummary) -> some View {
-        Section {
-            ForEach(summary.reading) { book in
+    @ViewBuilder private func readingCards(_ kobo: Kobo) -> some View {
+        if let summary {
+            if let current = summary.reading.first {
+                HomeSectionTitle("Continue Reading")
                 NavigationLink {
-                    BookDetailView(client: client, bookID: book.id, fallbackTitle: book.title)
+                    BookDetailView(client: client, bookID: current.id, fallbackTitle: current.title)
                 } label: {
-                    ReadingRow(client: client, book: book)
+                    ContinueReadingCard(client: client, book: current)
                 }
+                .buttonStyle(.plain)
+
+                if summary.reading.count > 1 {
+                    HomeSectionTitle("Also Reading")
+                        .padding(.top, 12)
+                    ReadingShelf(client: client, books: Array(summary.reading.dropFirst()))
+                }
+            } else {
+                MascotMessage(image: "MascotReading", title: "Nothing in Progress",
+                              message: "Send a book and it’ll be waiting on your Kobo.", size: 140)
+                    .card()
             }
+
+            HomeSectionTitle("Your Reading")
+                .padding(.top, 12)
             NavigationLink {
-                StatsView(client: client, summary: summary, model: finder.info[kobo.id]?.model ?? kobo.model)
+                StatsView(client: client, summary: summary, model: model(kobo))
             } label: {
                 StatsStrip(stats: summary.stats)
+                    .foregroundStyle(.primary)
+                    .card()
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("Reading Stats")
-        } header: {
-            Text(summary.reading.isEmpty ? "Reading" : "Reading Now")
         }
     }
 
-    /// A library row that opens the book's details once the Kobo has imported it.
-    @ViewBuilder private func bookLink(_ book: Book) -> some View {
-        if let id = book.id, book.inLibrary == true {
-            NavigationLink {
-                BookDetailView(client: client, bookID: id, fallbackTitle: book.displayTitle)
-            } label: {
-                BookRow(book: book)
-            }
-        } else {
-            BookRow(book: book)
+    private func libraryCard(_ kobo: Kobo) -> some View {
+        NavigationLink {
+            LibraryView(client: client, model: model(kobo), books: books,
+                        delete: { await delete($0, from: kobo) }, reload: { await loadBooks() })
+        } label: {
+            LibraryCard(client: client, covers: libraryCovers, count: books.count,
+                        notImported: books.filter { $0.inLibrary == false }.count)
         }
+        .buttonStyle(.plain)
+        .padding(.top, summary == nil ? 0 : 12)
     }
 
-    private var transferSection: some View {
-        Section {
-            ForEach(transfers.items) { item in
-                TransferRow(item: item)
-            }
-        } header: {
-            if transfers.isRunning {
-                Text("Sending")
-            } else if transfers.failures.isEmpty {
-                Text("Sent")
-            } else {
-                HStack {
-                    Text("Couldn’t Send")
-                    Spacer()
-                    Button("Dismiss") {
-                        withAnimation { transfers.clear() }
-                    }
-                    .font(.subheadline)
-                    .textCase(nil)
-                }
-            }
-        } footer: {
-            if let imported = transfers.imported {
-                Text(imported ? "Your Kobo is adding them to its library." : BookName.importHint)
-            }
-        }
+    /// Covers for the library card: recently read first.
+    private var libraryCovers: [ReadingBook] {
+        guard let summary else { return [] }
+        var seen = Set<String>()
+        return (summary.reading + summary.finished + summary.byTime)
+            .filter { $0.cover && seen.insert($0.id).inserted }
+    }
+
+    private var subtitle: String {
+        guard let kobo = selected else { return "" }
+        if finder.unreachable.contains(kobo.id) { return "Not responding" }
+        guard let info = finder.info[kobo.id] else { return "Connecting…" }
+        var parts: [String] = []
+        if let battery = info.battery { parts.append("\(battery.level)%\(battery.charging ? " charging" : "")") }
+        parts.append("\(ByteCountFormatter.string(fromByteCount: info.free, countStyle: .file)) free")
+        if info.locked == true { parts.append("PIN") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func menuLabel(_ kobo: Kobo) -> String {
+        guard let info = finder.info[kobo.id] else { return model(kobo) }
+        let serial = info.serial.isEmpty ? "" : " \(info.serial)"
+        return "\(info.model)\(serial)"
     }
 
     @ViewBuilder private var searchingView: some View {
         if finder.permissionDenied {
-            ContentUnavailableView {
-                Label("Local Network Access Is Off", systemImage: "wifi.exclamationmark")
-            } description: {
-                Text("EzKobo needs Local Network access to find your Kobo.")
-            } actions: {
+            VStack(spacing: 20) {
+                MascotMessage(title: "Local Network Access Is Off",
+                              message: "EzKobo needs Local Network access to find your Kobo.")
                 Button("Open Settings") {
                     openURL(URL(string: UIApplication.openSettingsURLString)!)
                 }
+                .buttonStyle(.glass)
             }
         } else {
-            ContentUnavailableView {
-                Label("Looking for Kobos", systemImage: "wifi")
-                    .symbolEffect(.variableColor.iterative, options: .repeating)
-            } description: {
-                Text("Make sure your Kobo is awake and on the same Wi‑Fi network as this iPhone.")
-            }
+            MascotMessage(image: "MascotReading", title: "Looking for Your Kobo",
+                          message: "Make sure it’s awake and on the same Wi‑Fi as this iPhone.",
+                          size: 200, bounce: true)
         }
     }
 
@@ -246,6 +243,7 @@ struct ContentView: View {
             summary = try? await client.reading()
         } catch let error as KoboError where error.needsPIN {
             books = []
+            summary = nil
             booksError = "This Kobo has a PIN."
             pinPrompt = kobo
         } catch {
@@ -284,9 +282,8 @@ struct ContentView: View {
         await loadBooks()
         await finder.refresh(kobo)
 
-        // A successful send is confirmed briefly, then gets out of the way;
-        // the books themselves are in the library list. Failures stay until
-        // dismissed.
+        // A successful send is confirmed briefly, then gets out of the way.
+        // Failures stay until dismissed.
         guard transfers.failures.isEmpty else { return }
         let batch = transfers.items.map(\.id)
         try? await Task.sleep(for: .seconds(3))
@@ -302,38 +299,5 @@ struct ContentView: View {
         _ = await client.rescan()
         await loadBooks()
         await finder.refresh(kobo)
-    }
-}
-
-private struct BookRow: View {
-    let book: Book
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(book.displayTitle)
-                .lineLimit(2)
-            Text(details)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            if book.inLibrary == false {
-                Text("Not in library yet")
-                    .font(.subheadline)
-                    .foregroundStyle(.orange)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    private var details: String {
-        var parts: [String] = []
-        if let author = book.author, !author.isEmpty { parts.append(author) }
-        parts.append(BookName.format(book.name))
-        if let progress = book.progress, progress > 0 {
-            parts.append("\(progress)% read")
-        } else {
-            parts.append(ByteCountFormatter.string(fromByteCount: book.size, countStyle: .file))
-        }
-        return parts.joined(separator: " · ")
     }
 }
