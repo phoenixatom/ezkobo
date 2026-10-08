@@ -67,6 +67,9 @@ func serve(cfg config) error {
 	mux.HandleFunc("PUT /api/books/{name}", s.track(s.requirePIN(s.putBook)))
 	mux.HandleFunc("DELETE /api/books/{path...}", s.track(s.requirePIN(s.deleteBook)))
 	mux.HandleFunc("POST /api/rescan", s.track(s.requirePIN(s.rescan)))
+	mux.HandleFunc("GET /api/reading", s.track(s.requirePIN(s.reading)))
+	mux.HandleFunc("GET /api/book", s.track(s.requirePIN(s.bookDetails)))
+	mux.HandleFunc("GET /api/cover", s.track(s.requirePIN(s.cover)))
 	mux.HandleFunc("GET /api/settings", s.track(s.requirePIN(s.getSettings)))
 	mux.HandleFunc("PUT /api/settings", s.track(s.requirePIN(s.putSettings)))
 	mux.HandleFunc("PUT /api/pin", s.track(s.requirePIN(s.putPIN)))
@@ -193,7 +196,9 @@ type bookFile struct {
 	Title     string `json:"title,omitempty"`
 	Author    string `json:"author,omitempty"`
 	InLibrary *bool  `json:"inLibrary"`
-	Progress  int    `json:"progress,omitempty"`
+	// Nickel's ContentID, for /api/book and /api/cover.
+	ID       string `json:"id"`
+	Progress int    `json:"progress,omitempty"`
 }
 
 func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
@@ -201,6 +206,9 @@ func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
+	}
+	for i := range books {
+		books[i].ID = "file://" + strings.TrimSuffix(s.libraryRoot(), "/") + "/" + books[i].Name
 	}
 	if lib := kobo.Library(s.cfg.db, s.libraryRoot()); lib != nil {
 		for i := range books {

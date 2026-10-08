@@ -86,7 +86,7 @@ func (g *pinGuard) check(want, got string) (ok bool, wait time.Duration) {
 }
 
 // requirePIN protects a handler when a PIN is set. Clients send it in the
-// X-EzKobo-PIN header.
+// X-EzKobo-PIN header, or as a "pin" query parameter (for cover images).
 func (s *server) requirePIN(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pin := readPIN(s.cfg.stateDir)
@@ -94,7 +94,11 @@ func (s *server) requirePIN(h http.HandlerFunc) http.HandlerFunc {
 			h(w, r)
 			return
 		}
-		ok, wait := s.pins.check(pin, r.Header.Get("X-EzKobo-PIN"))
+		got := r.Header.Get("X-EzKobo-PIN")
+		if got == "" {
+			got = r.URL.Query().Get("pin") // <img> tags can't send headers
+		}
+		ok, wait := s.pins.check(pin, got)
 		if wait > 0 {
 			w.Header().Set("Retry-After", "30")
 			httpError(w, errors.New("too many wrong PINs, try again in 30 seconds"), http.StatusTooManyRequests)
