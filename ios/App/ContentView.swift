@@ -104,6 +104,10 @@ struct ContentView: View {
 
     private func home(_ kobo: Kobo) -> some View {
         VStack(spacing: 14) {
+            if finder.kobos.count > 1 {
+                koboSwitcher(selected: kobo)
+                    .padding(.bottom, 4)
+            }
             if !transfers.items.isEmpty {
                 TransferCard(queue: transfers)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -131,6 +135,44 @@ struct ContentView: View {
         .padding(.top, 8)
         .padding(.bottom, 24)
         .animation(.default, value: transfers.items.isEmpty)
+    }
+
+    /// One tap to switch Kobos: a capsule per Kobo, the selected one filled.
+    private func koboSwitcher(selected: Kobo) -> some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 10) {
+                ForEach(finder.kobos) { kobo in
+                    let isSelected = kobo.id == selected.id
+                    Button {
+                        withAnimation(.snappy) { selectedID = kobo.id }
+                    } label: {
+                        HStack(spacing: 8) {
+                            DeviceGlyph(model: model(kobo))
+                                .scaleEffect(0.55)
+                                .frame(width: 20, height: 22)
+                            Text(switcherName(kobo))
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .padding(.horizontal, 4)
+                    }
+                    .buttonStyle(isSelected ? AnyPrimitiveButtonStyle(.glassProminent) : AnyPrimitiveButtonStyle(.glass))
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+        .scrollIndicators(.hidden)
+        .padding(.horizontal, -20)
+    }
+
+    /// The model, plus the end of the serial when two Kobos share a model.
+    private func switcherName(_ kobo: Kobo) -> String {
+        let name = model(kobo)
+        let sameModel = finder.kobos.filter { model($0) == name }.count > 1
+        if sameModel, let serial = finder.info[kobo.id]?.serial, !serial.isEmpty {
+            return "\(name) \(serial)"
+        }
+        return name
     }
 
     @ViewBuilder private func readingCards(_ kobo: Kobo) -> some View {
@@ -300,4 +342,15 @@ struct ContentView: View {
         await loadBooks()
         await finder.refresh(kobo)
     }
+}
+
+/// Lets a button switch between two primitive styles (glass and glassProminent).
+struct AnyPrimitiveButtonStyle: PrimitiveButtonStyle {
+    private let make: (Configuration) -> AnyView
+
+    init<S: PrimitiveButtonStyle>(_ style: S) {
+        make = { AnyView(style.makeBody(configuration: $0)) }
+    }
+
+    func makeBody(configuration: Configuration) -> some View { make(configuration) }
 }
