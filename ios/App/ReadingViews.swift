@@ -180,11 +180,13 @@ struct BookDetailView: View {
                 Text("Highlights and notes you make on the Kobo appear here.")
                     .foregroundStyle(.secondary)
             }
-            ForEach(highlights) { h in
+            ForEach(Array(highlights.enumerated()), id: \.element.id) { index, h in
                 VStack(alignment: .leading, spacing: 6) {
-                    if let position = h.positionLabel {
+                    // Show where we are only when it changes, like a running header.
+                    if let position = h.positionLabel,
+                       index == 0 || highlights[index - 1].positionLabel != position {
                         Text(position)
-                            .font(.caption)
+                            .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
                             .accessibilityLabel("\(position) through the book")
                     }

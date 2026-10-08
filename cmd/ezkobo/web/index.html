@@ -361,12 +361,16 @@ async function showBook(id) {
       </div>
       ${b.description ? `<div class="section-header">About</div><div class="group"><div class="row desc">${esc(b.description)}</div></div>` : ''}
       <div class="section-header">${highlights.length ? `Highlights (${highlights.length})` : 'Highlights'}</div>
-      <div class="group">${highlights.length ? highlights.map((h) => `
+      <div class="group">${highlights.length ? highlights.map((h, i) => {
+        const pos = h.position != null ? Math.round(h.position) : null;
+        const prev = i > 0 && highlights[i - 1].position != null ? Math.round(highlights[i - 1].position) : null;
+        return `
         <div class="row"><div class="grow">
-          ${h.position != null ? `<div class="note" style="margin: 0 0 4px">${Math.round(h.position)}%</div>` : ''}
+          ${pos != null && pos !== prev ? `<div class="note" style="margin: 0 0 4px; font-weight: 500">${pos}%</div>` : ''}
           ${h.text ? `<div class="quote">${esc(h.text)}</div>` : ''}
           ${h.note ? `<div class="note" style="margin-top:6px">Note: ${esc(h.note)}</div>` : ''}
-        </div></div>`).join('') : '<div class="row muted">Highlights and notes you make on the Kobo appear here.</div>'}</div>`;
+        </div></div>`;
+      }).join('') : '<div class="row muted">Highlights and notes you make on the Kobo appear here.</div>'}</div>`;
   } catch (_) {
     $('bookBody').innerHTML = '<p class="muted">Couldn’t load this book.</p>';
   }
