@@ -64,7 +64,7 @@ struct UploadResult: Decodable {
     let metadata: String?
 }
 
-struct Book: Decodable, Identifiable, Hashable {
+struct Book: Decodable, Hashable {
     /// Path relative to the Kobo's storage, e.g. "Books/Dune.epub".
     let name: String
     let size: Int64
@@ -75,8 +75,10 @@ struct Book: Decodable, Identifiable, Hashable {
     /// False when the file is on the Kobo but not in its library yet; nil if unknown.
     let inLibrary: Bool?
     let progress: Int?
+    /// The Kobo's library ID, for details and cover.
+    let id: String?
 
-    var id: String { name }
+    var listID: String { name }
     var date: Date { Date(timeIntervalSince1970: mtime) }
     var displayTitle: String { title.flatMap { $0.isEmpty ? nil : $0 } ?? BookName.title(name) }
 }
@@ -150,6 +152,26 @@ struct KoboClient {
               let response = try? JSONDecoder().decode(Response.self, from: data)
         else { return false }
         return response.ok
+    }
+
+    func reading() async throws -> ReadingSummary {
+        try await get("api/reading")
+    }
+
+    func book(_ id: String) async throws -> BookDetail {
+        var components = URLComponents(url: base.appending(path: "api/book"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "id", value: id)]
+        let (data, response) = try await Self.session.data(for: request(components.url!, method: "GET"))
+        try check(data, response)
+        return try JSONDecoder().decode(BookDetail.self, from: data)
+    }
+
+    func coverData(_ id: String) async throws -> Data {
+        var components = URLComponents(url: base.appending(path: "api/cover"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "id", value: id)]
+        let (data, response) = try await Self.session.data(for: request(components.url!, method: "GET"))
+        try check(data, response)
+        return data
     }
 
     func settings() async throws -> KoboSettings {

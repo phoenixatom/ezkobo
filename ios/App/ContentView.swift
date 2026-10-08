@@ -5,6 +5,8 @@ struct ContentView: View {
     @StateObject private var transfers = TransferQueue()
     @AppStorage("selectedKobo") private var selectedID = ""
     @State private var books: [Book] = []
+    @State private var client: KoboClient?
+    @State private var summary: ReadingSummary?
     @State private var booksError: String?
     @State private var choosingFiles = false
     @State private var query = ""
@@ -28,6 +30,9 @@ struct ContentView: View {
                 }
                 if !finder.kobos.isEmpty {
                     koboSection
+                }
+                if let selected, let summary {
+                    readingSection(selected, summary)
                 }
                 if let selected {
                     librarySection(selected)
@@ -121,8 +126,8 @@ struct ContentView: View {
                 Text("No books match “\(query)”.")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(filteredBooks) { book in
-                    BookRow(book: book)
+                ForEach(filteredBooks, id: \.listID) { book in
+                    bookLink(book)
                         .swipeActions {
                             Button("Delete", systemImage: "trash", role: .destructive) {
                                 Task { await delete(book, from: kobo) }
@@ -136,6 +141,38 @@ struct ContentView: View {
             if books.contains(where: { $0.inLibrary == false }) {
                 Text(BookName.importHint)
             }
+        }
+    }
+
+    private func readingSection(_ kobo: Kobo, _ summary: ReadingSummary) -> some View {
+        Section {
+            ForEach(summary.reading) { book in
+                NavigationLink {
+                    BookDetailView(client: client, bookID: book.id, fallbackTitle: book.title)
+                } label: {
+                    ReadingRow(client: client, book: book)
+                }
+            }
+            NavigationLink {
+                StatsView(client: client, summary: summary, model: finder.info[kobo.id]?.model ?? kobo.model)
+            } label: {
+                LabeledContent("Reading Stats", value: readingTime(summary.stats.secondsRead))
+            }
+        } header: {
+            Text(summary.reading.isEmpty ? "Reading" : "Reading Now")
+        }
+    }
+
+    /// A library row that opens the book's details once the Kobo has imported it.
+    @ViewBuilder private func bookLink(_ book: Book) -> some View {
+        if let id = book.id, book.inLibrary == true {
+            NavigationLink {
+                BookDetailView(client: client, bookID: id, fallbackTitle: book.displayTitle)
+            } label: {
+                BookRow(book: book)
+            }
+        } else {
+            BookRow(book: book)
         }
     }
 
@@ -198,11 +235,14 @@ struct ContentView: View {
     private func loadBooks() async {
         guard let kobo = selected, let client = await finder.client(for: kobo) else {
             books = []
+            summary = nil
             return
         }
+        self.client = client
         do {
             books = try await client.books()
             booksError = nil
+            summary = try? await client.reading()
         } catch let error as KoboError where error.needsPIN {
             books = []
             booksError = "This Kobo has a PIN."
@@ -256,7 +296,7 @@ struct ContentView: View {
 
     private func delete(_ book: Book, from kobo: Kobo) async {
         guard let client = await finder.client(for: kobo) else { return }
-        books.removeAll { $0.id == book.id }
+        books.removeAll { $0.name == book.name }
         try? await client.delete(book.name)
         _ = await client.rescan()
         await loadBooks()
