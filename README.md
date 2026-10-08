@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/icon.png" width="96" alt="EzKobo icon">
+  <img src="docs/mascot.png" width="150" alt="The EzKobo mascot, a green leaf-eared creature in a scarf">
 </p>
 
 <h1 align="center">EzKobo</h1>
