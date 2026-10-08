@@ -33,6 +33,9 @@ already have:
 - **Your library in your pocket.** Browse, search and delete books, with real
   titles, authors and reading progress, and see which books haven't been
   imported yet.
+- **Your reading, at a glance.** What you're reading now with covers and time
+  left, reading stats, and every book's details, highlights and notes (copy
+  or share them).
 - **Private by design.** Books go phone → your Wi‑Fi → Kobo, never through a
   cloud. The optional details lookup sends only a book's title and author, to
   the sources you pick: Apple Books, Open Library, Google Books or Hardcover.

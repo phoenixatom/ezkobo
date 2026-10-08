@@ -111,6 +111,24 @@
   .pin-row button {
     border: 0; background: none; color: var(--tint); font: inherit; font-weight: 600; cursor: pointer;
   }
+  .cover { flex: none; width: 44px; height: 66px; border-radius: 3px; object-fit: cover; background: var(--fill); }
+  .cover.big { width: 90px; height: 135px; border-radius: 6px; }
+  .bar { height: 4px; border-radius: 2px; background: var(--fill); margin: 6px 0 4px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--tint); }
+  .tap { cursor: pointer; }
+  .chev { color: var(--secondary); flex: none; }
+  .value { color: var(--secondary); white-space: nowrap; }
+  dialog {
+    border: 0; padding: 0; width: min(560px, 100vw); max-height: 92vh; border-radius: 26px 26px 0 0;
+    margin: auto auto 0; background: var(--bg); color: var(--label);
+  }
+  @media (min-width: 640px) { dialog { border-radius: 26px; margin: auto; } }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+  .sheet { padding: 16px 16px 32px; overflow-y: auto; max-height: 92vh; }
+  .sheet-bar { display: flex; justify-content: flex-end; }
+  .sheet-bar button { border: 0; background: none; color: var(--tint); font: inherit; font-weight: 600; padding: 8px; cursor: pointer; }
+  .quote { border-left: 3px solid #ffcc00; padding-left: 10px; }
+  .desc { white-space: pre-line; }
   .empty { text-align: center; padding: 120px 24px 0; }
   .empty h2 { font-size: 22px; margin: 16px 0 8px; }
   .empty p { color: var(--secondary); margin: 0; }
@@ -158,6 +176,16 @@
     <div class="group"><div class="row" id="kobo"></div></div>
   </section>
 
+  <section id="readingSection" hidden>
+    <div class="section-header" id="readingTitle">Reading Now</div>
+    <div class="group" id="reading"></div>
+  </section>
+
+  <section id="statsSection" hidden>
+    <div class="section-header">Reading Stats</div>
+    <div class="group" id="stats"></div>
+  </section>
+
   <section id="librarySection" hidden>
     <div class="section-header" id="libraryTitle">On Kobo</div>
     <div class="group" id="books"></div>
@@ -171,6 +199,10 @@
 </main>
 
 <button class="send" id="send" hidden>Send Books</button>
+<dialog id="bookSheet"><div class="sheet">
+  <div class="sheet-bar"><button id="closeSheet">Done</button></div>
+  <div id="bookBody" tabindex="-1" autofocus style="outline: none"></div>
+</div></dialog>
 <input type="file" id="file" multiple>
 
 <script>
@@ -180,6 +212,7 @@ const IMPORT_HINT = 'On your Kobo, open the menu and tap Import new books to add
 
 let info = null;
 let books = [];
+let summary = null;
 
 // The PIN, if this Kobo has one, is remembered in this browser.
 const PIN_KEY = 'ezkobo-pin';
@@ -202,6 +235,85 @@ function size(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + ' MB';
   return Math.max(1, Math.round(n / 1e3)) + ' KB';
 }
+function hours(sec) {
+  if (!sec || sec < 60) return 'Under a minute';
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return h ? `${h} hr${h > 1 ? 's' : ''}${m ? `, ${m} min` : ''}` : `${m} min`;
+}
+function when(iso) {
+  const d = iso ? new Date(iso) : null;
+  return d && !isNaN(d) ? d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+}
+const coverURL = (id) => '/api/cover?id=' + encodeURIComponent(id) + (storedPIN() ? '&pin=' + encodeURIComponent(storedPIN()) : '');
+const coverImg = (b, big) => b.cover ? `<img class="cover${big ? ' big' : ''}" src="${esc(coverURL(b.id))}" alt="">` : `<div class="cover${big ? ' big' : ''}"></div>`;
+const chevron = '<svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function renderReading() {
+  if (!summary) { $('readingSection').hidden = $('statsSection').hidden = true; return; }
+  const r = summary.reading;
+  $('readingSection').hidden = r.length === 0;
+  $('reading').innerHTML = r.map((b) => `
+    <div class="row tap" data-book="${esc(b.id)}">
+      ${coverImg(b)}
+      <div class="grow">
+        <div class="title2">${esc(b.title)}</div>
+        ${b.author ? `<div class="subtitle">${esc(b.author)}</div>` : ''}
+        <div class="bar"><div style="width:${b.progress}%"></div></div>
+        <div class="note">${[b.progress + '%', b.secondsLeft ? hours(b.secondsLeft) + ' left' : ''].filter(Boolean).join(' · ')}</div>
+      </div>${chevron}
+    </div>`).join('');
+  const st = summary.stats;
+  $('statsSection').hidden = false;
+  $('stats').innerHTML = [['Time reading', hours(st.secondsRead)], ['Finished', st.finished], ['Reading', st.reading], ['Not started', st.notStarted]]
+    .map(([k, v]) => `<div class="row"><div class="grow">${k}</div><span class="value">${v}</span></div>`).join('')
+    + summary.byTime.slice(0, 5).map((b) => `
+    <div class="row tap" data-book="${esc(b.id)}" style="--inset: 78px">
+      ${coverImg(b)}
+      <div class="grow"><div class="one-line">${esc(b.title)}</div>${b.author ? `<div class="subtitle">${esc(b.author)}</div>` : ''}</div>
+      <span class="value">${hours(b.secondsRead)}</span>${chevron}
+    </div>`).join('');
+}
+
+async function openBook(id) {
+  $('bookBody').innerHTML = '<p class="muted">Loading…</p>';
+  $('bookSheet').showModal();
+  try {
+    const res = await api('/api/book?id=' + encodeURIComponent(id));
+    if (!res.ok) throw new Error();
+    const { book: b, highlights } = await res.json();
+    const series = b.series ? b.series + (b.seriesNumber ? ' #' + b.seriesNumber : '') : '';
+    const facts = [['Time reading', b.secondsRead ? hours(b.secondsRead) : ''], ['Time left', b.secondsLeft ? hours(b.secondsLeft) : ''],
+      ['Last read', when(b.lastRead)], ['Finished', when(b.finished)], ['Pages', b.pages || ''], ['Publisher', b.publisher || ''], ['ISBN', b.isbn || '']]
+      .filter(([, v]) => v);
+    $('bookBody').innerHTML = `
+      <div style="display:flex; gap:16px; align-items:flex-start; margin: 4px 4px 8px">
+        ${coverImg(b, true)}
+        <div><h2 style="margin:0 0 6px; font-size:22px">${esc(b.title)}</h2>
+          ${b.author ? `<div class="muted">${esc(b.author)}</div>` : ''}${series ? `<div class="subtitle">${esc(series)}</div>` : ''}</div>
+      </div>
+      <div class="section-header">Reading</div>
+      <div class="group">
+        <div class="row"><div class="grow"><div class="bar"><div style="width:${b.progress}%"></div></div>
+          <div class="note">${b.status === 2 ? 'Finished' : b.status === 0 ? 'Not started' : b.progress + '% read'}</div></div></div>
+        ${facts.map(([k, v]) => `<div class="row"><div class="grow">${k}</div><span class="value">${esc(String(v))}</span></div>`).join('')}
+      </div>
+      ${b.description ? `<div class="section-header">About</div><div class="group"><div class="row desc">${esc(b.description)}</div></div>` : ''}
+      <div class="section-header">${highlights.length ? `Highlights (${highlights.length})` : 'Highlights'}</div>
+      <div class="group">${highlights.length ? highlights.map((h) => `
+        <div class="row"><div class="grow">
+          ${h.text ? `<div class="quote">${esc(h.text)}</div>` : ''}
+          ${h.note ? `<div class="note" style="margin-top:6px">Note: ${esc(h.note)}</div>` : ''}
+        </div></div>`).join('') : '<div class="row muted">Highlights and notes you make on the Kobo appear here.</div>'}</div>`;
+  } catch (_) {
+    $('bookBody').innerHTML = '<p class="muted">Couldn’t load this book.</p>';
+  }
+}
+$('closeSheet').addEventListener('click', () => $('bookSheet').close());
+document.addEventListener('click', (e) => {
+  const row = e.target.closest('[data-book]');
+  if (row && !e.target.closest('.delete')) openBook(row.dataset.book);
+});
+
 function deviceGlyph(model) {
   const buttons = /libra|forma|sage/i.test(model);
   const w = buttons ? 31 : 27;
@@ -248,7 +360,7 @@ function renderBooks() {
     el.innerHTML = `<div class="row muted">No books match “${esc($('query').value)}”.</div>`;
   } else {
     el.innerHTML = shown.map((b) => `
-      <div class="row">
+      <div class="row${b.inLibrary ? ' tap' : ''}"${b.inLibrary ? ` data-book="${esc(b.id)}"` : ''}>
         <div class="grow">
           <div class="title2">${esc(b.title || bookTitle(b.name))}</div>
           <div class="subtitle">${[b.author ? esc(b.author) : '', bookFormat(b.name), b.progress ? b.progress + '% read' : size(b.size)].filter(Boolean).join(' · ')}</div>
@@ -277,6 +389,11 @@ async function refresh() {
     $('pinSection').hidden = true;
     books = (await l.json()).books;
     renderBooks();
+    try {
+      const rr = await api('/api/reading');
+      summary = rr.ok ? await rr.json() : null;
+    } catch (_) { summary = null; }
+    renderReading();
   } catch (e) {
     $('offline').hidden = false;
     $('koboSection').hidden = $('librarySection').hidden = $('send').hidden = true;
