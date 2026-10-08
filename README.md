@@ -23,19 +23,20 @@ already have:
 
 - **It just shows up.** Your Kobos appear in the app on their own, like a
   printer on your network. Nothing to pair, no IP addresses.
-- **Every Kobo, at a glance.** Model, battery, free space and book count, so
-  you pick the right one when there's more than one in the house.
+- **Every Kobo, at a glance.** Battery, free space and reading stats. Name
+  each Kobo and switch between them with one tap.
 - **Send from anywhere.** From the app, or the Share sheet in Files, Safari,
   Mail and other apps.
 - **Books arrive ready to read.** EPUBs are converted to Kobo's own KEPUB
   format, messy titles and authors are cleaned up (missing details and covers
-  are looked up online), and files are named "Author - Title".
+  are looked up online), files are named "Author - Title", and the book shows
+  up in your Kobo library by itself.
 - **Your library in your pocket.** Browse, search and delete books, with real
   titles, authors and reading progress, and see which books haven't been
   imported yet.
 - **Your reading, at a glance.** What you're reading now with covers and time
-  left, reading stats, and every book's details, highlights and notes (copy
-  or share them).
+  left, reading stats, and every book's details, highlights and notes, with
+  where each sits in the book (copy or share them). Hide books you've put down.
 - **Private by design.** Books go phone → your Wi‑Fi → Kobo, never through a
   cloud. The optional details lookup sends only a book's title and author, to
   the sources you pick: Apple Books, Open Library, Google Books or Hardcover.
@@ -44,7 +45,7 @@ already have:
 - **No app? Use a browser.** Every Kobo also serves the same view at
   `http://kobo-xxxx.local`, for Android phones and laptops.
 - **Plays nicely with mods.** Installs alongside NickelMenu, NickelHook mods
-  and KOReader, and adds NickelMenu for you if it's missing.
+  and KOReader, and adds NickelMenu and NickelDBus for you if they're missing.
 
 ### Send from any app
 
@@ -155,10 +156,12 @@ on the Kobo, so they also apply to the Share sheet and the browser page.
 
 | Setting | Default | What it does |
 |---|---|---|
+| Name | The model | What the app calls this Kobo, e.g. "Atom's Libra" |
 | Convert to KEPUB | On | Converts EPUBs to Kobo's KEPUB format |
 | Fix Missing Details | On | When a book's title or author is missing or messy (or it has no cover), looks it up online. Sends the title and author to the sources below |
 | Details Sources | Apple Books, Open Library, Google Books | Which services to ask, in what order (drag to reorder). Google Books works best with your own API key; Hardcover needs a token |
 | Rename as Author – Title | On | Names files "Author - Title.kepub.epub" |
+| Hidden from Reading | None | Books hidden from Continue Reading (long-press a book › Hide from Reading); they stay on the Kobo |
 | PIN | Off | Requires a 4–8 digit PIN to see, send or delete books |
 
 ## Compatibility with other mods
