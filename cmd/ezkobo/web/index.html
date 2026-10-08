@@ -118,15 +118,22 @@
   .tap { cursor: pointer; }
   .chev { color: var(--secondary); flex: none; }
   .value { color: var(--secondary); white-space: nowrap; }
-  dialog {
-    border: 0; padding: 0; width: min(560px, 100vw); max-height: 92vh; border-radius: 26px 26px 0 0;
-    margin: auto auto 0; background: var(--bg); color: var(--label);
+  .navbar {
+    position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px;
+    margin: 0 -16px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+    background: color-mix(in srgb, var(--bg) 85%, transparent);
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
   }
-  @media (min-width: 640px) { dialog { border-radius: 26px; margin: auto; } }
-  dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
-  .sheet { padding: 16px 16px 32px; overflow-y: auto; max-height: 92vh; }
-  .sheet-bar { display: flex; justify-content: flex-end; }
-  .sheet-bar button { border: 0; background: none; color: var(--tint); font: inherit; font-weight: 600; padding: 8px; cursor: pointer; }
+  .back {
+    display: inline-flex; align-items: center; gap: 4px; border: 0; background: none;
+    color: var(--tint); font: inherit; padding: 6px 0; cursor: pointer;
+  }
+  .nav-title { flex: 1; text-align: center; font-weight: 600; margin-right: 70px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; flex: 1; }
+  .stat-strip div { text-align: center; }
+  .stat-strip b { display: block; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat-strip span { color: var(--secondary); font-size: 12px; }
   .quote { border-left: 3px solid #ffcc00; padding-left: 10px; }
   .desc { white-space: pre-line; }
   .empty { text-align: center; padding: 120px 24px 0; }
@@ -148,7 +155,7 @@
 </style>
 </head>
 <body>
-<main>
+<main id="mainPage">
   <h1>EzKobo</h1>
 
   <label class="search">
@@ -181,11 +188,6 @@
     <div class="group" id="reading"></div>
   </section>
 
-  <section id="statsSection" hidden>
-    <div class="section-header">Reading Stats</div>
-    <div class="group" id="stats"></div>
-  </section>
-
   <section id="librarySection" hidden>
     <div class="section-header" id="libraryTitle">On Kobo</div>
     <div class="group" id="books"></div>
@@ -199,10 +201,21 @@
 </main>
 
 <button class="send" id="send" hidden>Send Books</button>
-<dialog id="bookSheet"><div class="sheet">
-  <div class="sheet-bar"><button id="closeSheet">Done</button></div>
-  <div id="bookBody" tabindex="-1" autofocus style="outline: none"></div>
-</div></dialog>
+<main id="statsPage" hidden>
+  <nav class="navbar">
+    <button class="back" data-back><svg width="11" height="19" viewBox="0 0 11 19" aria-hidden="true"><path d="M9.5 1.5 2 9.5l7.5 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>EzKobo</button>
+    <div class="nav-title">Reading Stats</div>
+  </nav>
+  <div id="statsBody"></div>
+</main>
+
+<main id="bookPage" hidden>
+  <nav class="navbar">
+    <button class="back" data-back><svg width="11" height="19" viewBox="0 0 11 19" aria-hidden="true"><path d="M9.5 1.5 2 9.5l7.5 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>EzKobo</button>
+    <div class="nav-title" id="bookNavTitle"></div>
+  </nav>
+  <div id="bookBody"></div>
+</main>
 <input type="file" id="file" multiple>
 
 <script>
@@ -248,10 +261,13 @@ const coverURL = (id) => '/api/cover?id=' + encodeURIComponent(id) + (storedPIN(
 const coverImg = (b, big) => b.cover ? `<img class="cover${big ? ' big' : ''}" src="${esc(coverURL(b.id))}" alt="">` : `<div class="cover${big ? ' big' : ''}"></div>`;
 const chevron = '<svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="m1 1 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
+const shortHours = (sec) => sec >= 3600 ? Math.round(sec / 3600) + ' h' : Math.round((sec || 0) / 60) + ' min';
+
 function renderReading() {
-  if (!summary) { $('readingSection').hidden = $('statsSection').hidden = true; return; }
-  const r = summary.reading;
-  $('readingSection').hidden = r.length === 0;
+  if (!summary) { $('readingSection').hidden = true; return; }
+  const r = summary.reading, st = summary.stats;
+  $('readingSection').hidden = false;
+  $('readingTitle').textContent = r.length ? 'Reading Now' : 'Reading';
   $('reading').innerHTML = r.map((b) => `
     <div class="row tap" data-book="${esc(b.id)}">
       ${coverImg(b)}
@@ -261,26 +277,72 @@ function renderReading() {
         <div class="bar"><div style="width:${b.progress}%"></div></div>
         <div class="note">${[b.progress + '%', b.secondsLeft ? hours(b.secondsLeft) + ' left' : ''].filter(Boolean).join(' · ')}</div>
       </div>${chevron}
-    </div>`).join('');
-  const st = summary.stats;
-  $('statsSection').hidden = false;
-  $('stats').innerHTML = [['Time reading', hours(st.secondsRead)], ['Finished', st.finished], ['Reading', st.reading], ['Not started', st.notStarted]]
-    .map(([k, v]) => `<div class="row"><div class="grow">${k}</div><span class="value">${v}</span></div>`).join('')
-    + summary.byTime.slice(0, 5).map((b) => `
-    <div class="row tap" data-book="${esc(b.id)}" style="--inset: 78px">
-      ${coverImg(b)}
-      <div class="grow"><div class="one-line">${esc(b.title)}</div>${b.author ? `<div class="subtitle">${esc(b.author)}</div>` : ''}</div>
-      <span class="value">${hours(b.secondsRead)}</span>${chevron}
-    </div>`).join('');
+    </div>`).join('') + `
+    <div class="row tap" data-page="stats" aria-label="Reading stats">
+      <div class="stat-strip">
+        <div><b>${shortHours(st.secondsRead)}</b><span>Read</span></div>
+        <div><b>${st.finished}</b><span>Finished</span></div>
+        <div><b>${st.reading}</b><span>Reading</span></div>
+        <div><b>${st.notStarted}</b><span>To read</span></div>
+      </div>${chevron}
+    </div>`;
 }
 
-async function openBook(id) {
-  $('bookBody').innerHTML = '<p class="muted">Loading…</p>';
-  $('bookSheet').showModal();
+function bookRow(b, value) {
+  return `<div class="row tap" data-book="${esc(b.id)}" style="--inset: 78px">
+      ${coverImg(b)}
+      <div class="grow"><div class="one-line">${esc(b.title)}</div>${b.author ? `<div class="subtitle">${esc(b.author)}</div>` : ''}</div>
+      <span class="value">${value}</span>${chevron}
+    </div>`;
+}
+
+function showStats() {
+  if (!summary) { $('statsBody').innerHTML = '<p class="muted" style="text-align:center">Loading…</p>'; return; }
+  const st = summary.stats;
+  $('statsBody').innerHTML = `
+    <div class="group" style="margin-top:12px">
+      ${[['Time reading', hours(st.secondsRead)], ['Finished', st.finished], ['Reading', st.reading], ['Not started', st.notStarted]]
+        .map(([k, v]) => `<div class="row"><div class="grow">${k}</div><span class="value">${v}</span></div>`).join('')}
+    </div>
+    ${summary.byTime.length ? `<div class="section-header">Most Time Spent</div><div class="group">${summary.byTime.map((b) => bookRow(b, hours(b.secondsRead))).join('')}</div>` : ''}
+    ${summary.finished.length ? `<div class="section-header">Finished</div><div class="group">${summary.finished.map((b) => bookRow(b, when(b.finished))).join('')}</div>` : ''}`;
+}
+
+let mainScroll = 0;
+let pushed = 0; // pages opened from within the page, so Back can return
+function go(hash) {
+  if (!location.hash) mainScroll = window.scrollY;
+  pushed++;
+  location.hash = hash;
+}
+const openBook = (id) => go('book=' + encodeURIComponent(id));
+
+function route() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const id = params.get('book');
+  const stats = location.hash === '#stats';
+  $('bookPage').hidden = !id;
+  $('statsPage').hidden = !stats;
+  $('mainPage').hidden = !!id || stats;
+  $('send').style.display = id || stats ? 'none' : '';
+  if (id) { window.scrollTo(0, 0); showBook(id); }
+  else if (stats) { window.scrollTo(0, 0); showStats(); }
+  else window.scrollTo(0, mainScroll);
+}
+window.addEventListener('hashchange', route);
+document.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('click', () => {
+  // Opened from a link: there's nothing to go back to, so show the main page.
+  if (pushed > 0) { pushed--; history.back(); } else { location.hash = ''; }
+}));
+
+async function showBook(id) {
+  $('bookNavTitle').textContent = '';
+  $('bookBody').innerHTML = '<p class="muted" style="text-align:center">Loading…</p>';
   try {
     const res = await api('/api/book?id=' + encodeURIComponent(id));
     if (!res.ok) throw new Error();
     const { book: b, highlights } = await res.json();
+    $('bookNavTitle').textContent = b.title;
     const series = b.series ? b.series + (b.seriesNumber ? ' #' + b.seriesNumber : '') : '';
     const facts = [['Time reading', b.secondsRead ? hours(b.secondsRead) : ''], ['Time left', b.secondsLeft ? hours(b.secondsLeft) : ''],
       ['Last read', when(b.lastRead)], ['Finished', when(b.finished)], ['Pages', b.pages || ''], ['Publisher', b.publisher || ''], ['ISBN', b.isbn || '']]
@@ -308,8 +370,8 @@ async function openBook(id) {
     $('bookBody').innerHTML = '<p class="muted">Couldn’t load this book.</p>';
   }
 }
-$('closeSheet').addEventListener('click', () => $('bookSheet').close());
 document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-page="stats"]')) { go('stats'); return; }
   const row = e.target.closest('[data-book]');
   if (row && !e.target.closest('.delete')) openBook(row.dataset.book);
 });
@@ -394,6 +456,7 @@ async function refresh() {
       summary = rr.ok ? await rr.json() : null;
     } catch (_) { summary = null; }
     renderReading();
+    if (location.hash === '#stats') showStats();
   } catch (e) {
     $('offline').hidden = false;
     $('koboSection').hidden = $('librarySection').hidden = $('send').hidden = true;
@@ -504,6 +567,7 @@ document.addEventListener('drop', (e) => { e.preventDefault(); document.body.cla
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 
 refresh();
+route();
 </script>
 </body>
 </html>

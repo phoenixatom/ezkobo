@@ -156,8 +156,9 @@ struct ContentView: View {
             NavigationLink {
                 StatsView(client: client, summary: summary, model: finder.info[kobo.id]?.model ?? kobo.model)
             } label: {
-                LabeledContent("Reading Stats", value: readingTime(summary.stats.secondsRead))
+                StatsStrip(stats: summary.stats)
             }
+            .accessibilityLabel("Reading Stats")
         } header: {
             Text(summary.reading.isEmpty ? "Reading" : "Reading Now")
         }

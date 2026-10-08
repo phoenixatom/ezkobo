@@ -34,6 +34,38 @@ struct ReadingRow: View {
     }
 }
 
+/// Reading totals in one compact row: time read, finished, reading, to read.
+struct StatsStrip: View {
+    let stats: ReadingStats
+
+    var body: some View {
+        HStack(spacing: 0) {
+            figure(shortTime(stats.secondsRead), "Read")
+            figure("\(stats.finished)", "Finished")
+            figure("\(stats.reading)", "Reading")
+            figure("\(stats.notStarted)", "To Read")
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func figure(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.headline)
+                .monospacedDigit()
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// "23 h" or "45 min": short enough for a quarter of the row.
+    private func shortTime(_ seconds: Int) -> String {
+        seconds >= 3600 ? "\(Int((Double(seconds) / 3600).rounded())) h" : "\(seconds / 60) min"
+    }
+}
+
 /// Everything the Kobo knows about one book, with its highlights and notes.
 struct BookDetailView: View {
     let client: KoboClient?
