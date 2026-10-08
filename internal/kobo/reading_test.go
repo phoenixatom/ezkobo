@@ -30,6 +30,10 @@ func TestBooksAndHighlights(t *testing.T) {
 			1, 42, 3600, 5400, '2026-10-08T19:51:21Z', NULL, NULL, '<p>A novel &amp; a comedy.</p><p>Second.</p>', 'img1')`,
 		`INSERT INTO content VALUES ('store-uuid', 6, 'Persuasion', 'Jane Austen', 2, 100, 7200, 0, '', 'Austen', '6', NULL, 'img2')`,
 		`INSERT INTO content VALUES ('store-uuid!!chapter1', 9, 'Chapter 1', '', 0, 0, 0, 0, '', NULL, NULL, NULL, '')`,
+		`ALTER TABLE content ADD COLUMN IsDownloaded TEXT`,
+		`UPDATE content SET IsDownloaded = 'true'`,
+		// In the Kobo account but not on the device: must be left out.
+		`INSERT INTO content (ContentID, ContentType, Title, ReadStatus, IsDownloaded) VALUES ('cloud-uuid', 6, 'Not Downloaded', 1, 'false')`,
 		`ALTER TABLE content ADD COLUMN BookID TEXT`,
 		`ALTER TABLE content ADD COLUMN VolumeIndex INTEGER`,
 		`ALTER TABLE content ADD COLUMN ___FileSize REAL`,

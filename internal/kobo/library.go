@@ -23,7 +23,7 @@ func Library(dbPath, root string) map[string]LibraryEntry {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(2000)")
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil
 	}

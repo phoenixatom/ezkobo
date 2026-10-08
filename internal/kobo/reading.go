@@ -46,7 +46,7 @@ type Highlight struct {
 }
 
 func openDB(dbPath string) (*sql.DB, error) {
-	return sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(2000)")
+	return sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(5000)")
 }
 
 // Columns differ a little between firmware versions; each is optional.
@@ -74,7 +74,8 @@ var bookColumns = []struct {
 	{"ImageId", func(b *Book) any { return &b.ImageID }},
 }
 
-// Books returns the books in the Kobo's library. With id set, only that book.
+// Books returns the books on the Kobo (not those only in the Kobo account).
+// With id set, only that book.
 func Books(dbPath, id string) ([]Book, error) {
 	db, err := openDB(dbPath)
 	if err != nil {
@@ -115,6 +116,11 @@ func Books(dbPath, id string) ([]Book, error) {
 		return nil, fmt.Errorf("unexpected library database layout")
 	}
 	query := "SELECT " + strings.Join(exprs, ", ") + " FROM content WHERE ContentType = 6"
+	// The library also lists every book in the Kobo account, downloaded or
+	// not; only count and show the ones actually on the device.
+	if present["IsDownloaded"] {
+		query += " AND COALESCE(IsDownloaded, 'true') = 'true'"
+	}
 	var args []any
 	if id != "" {
 		query += " AND ContentID = ?"

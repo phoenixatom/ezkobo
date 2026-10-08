@@ -67,7 +67,6 @@ struct ContentView: View {
                     }
                 }
             }
-            .scrollEdgeEffectStyle(.soft, for: .bottom)
             .safeAreaBar(edge: .bottom) {
                 if selected != nil {
                     Button {
@@ -343,9 +342,9 @@ struct ContentView: View {
         }
         self.client = client
         do {
-            books = try await client.books()
+            books = try await retrying { try await client.books() }
             booksError = nil
-            summary = try? await client.reading()
+            summary = try? await retrying { try await client.reading() }
         } catch let error as KoboError where error.needsPIN {
             books = []
             summary = nil
@@ -354,6 +353,23 @@ struct ContentView: View {
         } catch {
             booksError = "Couldn’t load books from this Kobo."
         }
+    }
+
+    /// Tries a request up to three times. Right after a restart the Kobo is
+    /// busy importing books for a moment, and early requests can fail.
+    private func retrying<T>(_ request: () async throws -> T) async throws -> T {
+        var delay = 1.5
+        for _ in 0..<2 {
+            do {
+                return try await request()
+            } catch let error as KoboError where error.needsPIN {
+                throw error // retrying won't help
+            } catch {
+                try? await Task.sleep(for: .seconds(delay))
+                delay *= 2
+            }
+        }
+        return try await request()
     }
 
     /// Checks a PIN against the Kobo; on success remembers it, reloads, and
