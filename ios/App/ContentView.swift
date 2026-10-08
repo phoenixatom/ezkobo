@@ -42,7 +42,7 @@ struct ContentView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle(selected.map(name) ?? "EzKobo")
-            .navigationSubtitle(subtitle)
+            .navigationSubtitle(plainSubtitle)
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbarTitleMenu {
                 if finder.kobos.count > 1 {
@@ -60,6 +60,10 @@ struct ContentView: View {
                 if selected != nil {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Settings", systemImage: "gearshape") { showSettings = true }
+                    }
+                    // Under the large title: battery and space, with icons.
+                    ToolbarItem(placement: .largeSubtitle) {
+                        statusLine
                     }
                 }
             }
@@ -249,15 +253,53 @@ struct ContentView: View {
             .filter { $0.cover && seen.insert($0.id).inserted }
     }
 
-    private var subtitle: String {
+    /// Battery, free space and PIN, each with an SF Symbol so it's clear
+    /// what the numbers mean.
+    @ViewBuilder private var statusLine: some View {
+        if let kobo = selected, let info = finder.info[kobo.id], !finder.unreachable.contains(kobo.id) {
+            HStack(spacing: 14) {
+                if let battery = info.battery {
+                    Label("\(battery.level)%", systemImage: batterySymbol(battery))
+                        .accessibilityLabel("Battery \(battery.level)%\(battery.charging ? ", charging" : "")")
+                }
+                Label("\(ByteCountFormatter.string(fromByteCount: info.free, countStyle: .file)) free",
+                      systemImage: "internaldrive")
+                if info.locked == true {
+                    Label("PIN", systemImage: "lock.fill")
+                }
+            }
+            .labelStyle(StatusLabelStyle())
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Text(plainSubtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The same as text, for the collapsed title and VoiceOver.
+    private var plainSubtitle: String {
         guard let kobo = selected else { return "" }
         if finder.unreachable.contains(kobo.id) { return "Not responding" }
         guard let info = finder.info[kobo.id] else { return "Connecting…" }
         var parts: [String] = []
-        if let battery = info.battery { parts.append("\(battery.level)%\(battery.charging ? " charging" : "")") }
+        if let battery = info.battery { parts.append("\(battery.level)%") }
         parts.append("\(ByteCountFormatter.string(fromByteCount: info.free, countStyle: .file)) free")
-        if info.locked == true { parts.append("PIN") }
         return parts.joined(separator: " · ")
+    }
+
+    private func batterySymbol(_ battery: KoboInfo.Battery) -> String {
+        if battery.charging { return "battery.100percent.bolt" }
+        switch battery.level {
+        case 88...: return "battery.100percent"
+        case 63...: return "battery.75percent"
+        case 38...: return "battery.50percent"
+        case 13...: return "battery.25percent"
+        default: return "battery.0percent"
+        }
     }
 
     private func menuLabel(_ kobo: Kobo) -> String { switcherName(kobo) }
@@ -367,4 +409,14 @@ struct AnyPrimitiveButtonStyle: PrimitiveButtonStyle {
     }
 
     func makeBody(configuration: Configuration) -> some View { make(configuration) }
+}
+
+/// Icon and text close together, for the status line.
+struct StatusLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon
+            configuration.title
+        }
+    }
 }
