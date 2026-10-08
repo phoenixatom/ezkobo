@@ -27,9 +27,16 @@ already have:
   you pick the right one when there's more than one in the house.
 - **Send from anywhere.** From the app, or the Share sheet in Files, Safari,
   Mail and other apps.
-- **Your library in your pocket.** Browse, search and delete books on the Kobo.
-- **Private by design.** Books go phone → your Wi‑Fi → Kobo. Nothing touches
-  the internet.
+- **Books arrive ready to read.** EPUBs are converted to Kobo's own KEPUB
+  format, messy titles and authors are cleaned up (missing details and covers
+  are looked up online), and files are named "Author - Title".
+- **Your library in your pocket.** Browse, search and delete books, with real
+  titles, authors and reading progress, and see which books haven't been
+  imported yet.
+- **Private by design.** Books go phone → your Wi‑Fi → Kobo, never through a
+  cloud. The optional details lookup sends only a book's title and author.
+- **Optional PIN.** Keep others on your Wi‑Fi from seeing or changing your
+  books.
 - **No app? Use a browser.** Every Kobo also serves the same view at
   `http://kobo-xxxx.local`, for Android phones and laptops.
 - **Plays nicely with mods.** Installs alongside NickelMenu, NickelHook mods
@@ -53,14 +60,15 @@ flowchart LR
 1. **Discovery.** A small agent on the Kobo announces itself on your Wi‑Fi
    (Bonjour / mDNS, service `_ezkobo._tcp`), so the app finds it without
    addresses or pairing.
-2. **Transfer.** The app sends the book straight to the Kobo over HTTP. It's
-   saved in the Kobo's `Books` folder.
+2. **Transfer.** The app sends the book straight to the Kobo over HTTP. The
+   Kobo converts it to KEPUB with [kepubify](https://github.com/pgaskin/kepubify),
+   fixes its details if needed, and saves it in the `Books` folder.
 3. **Import.** Tap **Import new books** in the Kobo menu, and it appears in
    your library.
 
-The agent is one static Go binary (standard library only). It starts at boot
-and when Wi‑Fi turns on, does nothing until your phone talks to it, and is
-frozen while the Kobo sleeps.
+The agent is one static Go binary with no other dependencies on the Kobo. It
+starts at boot and when Wi‑Fi turns on, does nothing until your phone talks to
+it, and is frozen while the Kobo sleeps.
 
 ## Requirements
 
@@ -133,6 +141,18 @@ Network** access.
 
 Formats: EPUB, KEPUB, PDF, MOBI, CBZ, CBR, TXT, HTML, RTF and images.
 
+### Settings
+
+Tap the gear in the app to change these for the selected Kobo. They're stored
+on the Kobo, so they also apply to the Share sheet and the browser page.
+
+| Setting | Default | What it does |
+|---|---|---|
+| Convert to KEPUB | On | Converts EPUBs to Kobo's KEPUB format |
+| Fix Missing Details | On | When a book's title or author is missing or messy (or it has no cover), looks it up on Open Library, then Google Books. Sends the title and author to those services |
+| Rename as Author – Title | On | Names files "Author - Title.kepub.epub" |
+| PIN | Off | Requires a 4–8 digit PIN to see, send or delete books |
+
 Optional: with [NickelDBus](https://github.com/shermp/NickelDBus) installed,
 step 3 happens by itself. This is untested, and NickelDBus's author has noted
 it may not work on Colour models.
@@ -165,22 +185,11 @@ Kobo.
 
 ## Security
 
-The agent has no authentication: anyone on the same Wi‑Fi can list, send and
-delete books while the Kobo's Wi‑Fi is on. Fine at home; be careful on shared
-networks.
-
-## Roadmap
-
-- [ ] **Convert to KEPUB on send.** EPUBs become Kobo's native KEPUB format
-  for faster page turns, reading stats and better fonts.
-- [ ] **Fetch metadata.** Fill in title, author, series and cover from Open
-  Library or Google Books when a file has missing or messy metadata.
-- [ ] **Clean file names.** Name sent books "Author - Title.epub" from their
-  metadata.
-- [ ] **Show library status.** Mark books that are on the Kobo but not yet in
-  its library, and show real titles and authors from the Kobo's database.
-- [ ] **Optional PIN.** Require a code shown on the Kobo before a phone can
-  send or delete books, for shared networks.
+By default anyone on the same Wi‑Fi can list, send and delete books while
+the Kobo's Wi‑Fi is on. That's usually fine at home. On shared networks, set a
+PIN (gear › PIN). After five wrong PINs, the Kobo refuses tries for 30
+seconds. Forgot it? **EzKobo status** in the Kobo's menu shows it, and **EzKobo
+remove PIN** clears it.
 
 ## Development
 
@@ -204,6 +213,9 @@ go run . serve -addr :8081 -dir tmp/libra -rescan off \
 | `mdns.go` | mDNS / DNS‑SD responder advertising `_ezkobo._tcp` |
 | `device.go` | Kobo model, serial, battery, storage |
 | `rescan.go` | Library import via NickelDBus, if installed |
+| `process.go` | KEPUB conversion, metadata clean-up and lookup, renaming |
+| `library.go` | Reads the Kobo's library database (read-only) |
+| `settings.go` | Per-Kobo settings and the optional PIN |
 | `web/index.html` | Browser upload page (`http://kobo-xxxx.local`) |
 | `kobo/` | Boot script and udev rule |
 | `scripts/` | Install, backup, packaging, app icon |
