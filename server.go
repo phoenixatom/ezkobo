@@ -38,6 +38,7 @@ type server struct {
 	lastSeen time.Time
 	active   int
 	rescanMu sync.Mutex
+	pins     pinGuard
 }
 
 func serve(cfg config) error {
@@ -64,10 +65,15 @@ func serve(cfg config) error {
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") })
 	mux.HandleFunc("GET /api/info", s.track(s.info))
-	mux.HandleFunc("GET /api/books", s.track(s.listBooks))
-	mux.HandleFunc("PUT /api/books/{name}", s.track(s.putBook))
-	mux.HandleFunc("DELETE /api/books/{path...}", s.track(s.deleteBook))
-	mux.HandleFunc("POST /api/rescan", s.track(s.rescan))
+	// Everything below needs the PIN, if one is set.
+	mux.HandleFunc("GET /api/books", s.track(s.requirePIN(s.listBooks)))
+	mux.HandleFunc("PUT /api/books/{name}", s.track(s.requirePIN(s.putBook)))
+	mux.HandleFunc("DELETE /api/books/{path...}", s.track(s.requirePIN(s.deleteBook)))
+	mux.HandleFunc("POST /api/rescan", s.track(s.requirePIN(s.rescan)))
+	mux.HandleFunc("GET /api/settings", s.track(s.requirePIN(s.getSettings)))
+	mux.HandleFunc("PUT /api/settings", s.track(s.requirePIN(s.putSettings)))
+	mux.HandleFunc("PUT /api/pin", s.track(s.requirePIN(s.putPIN)))
+	mux.HandleFunc("DELETE /api/pin", s.track(s.requirePIN(s.deletePIN)))
 
 	srv := &http.Server{Handler: logRequests(mux), ReadHeaderTimeout: 30 * time.Second}
 
@@ -185,6 +191,11 @@ type book struct {
 	Name  string `json:"name"`
 	Size  int64  `json:"size"`
 	MTime int64  `json:"mtime"` // unix seconds
+	// From the Kobo's library database; InLibrary is null when unknown.
+	Title     string `json:"title,omitempty"`
+	Author    string `json:"author,omitempty"`
+	InLibrary *bool  `json:"inLibrary"`
+	Progress  int    `json:"progress,omitempty"`
 }
 
 func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +203,13 @@ func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
+	}
+	if lib := s.koboLibrary(); lib != nil {
+		for i := range books {
+			e, ok := lib[books[i].Name]
+			books[i].InLibrary = &ok
+			books[i].Title, books[i].Author, books[i].Progress = e.Title, e.Author, e.Progress
+		}
 	}
 	sort.Slice(books, func(i, j int) bool { return books[i].MTime > books[j].MTime })
 	free, _ := s.space()
@@ -239,7 +257,7 @@ func (s *server) allBooks() ([]book, error) {
 		}
 		if fi, err := e.Info(); err == nil {
 			rel, _ := filepath.Rel(root, p)
-			books = append(books, book{filepath.ToSlash(rel), fi.Size(), fi.ModTime().Unix()})
+			books = append(books, book{Name: filepath.ToSlash(rel), Size: fi.Size(), MTime: fi.ModTime().Unix()})
 		}
 		return nil
 	})
@@ -270,6 +288,7 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 		"free":     free,
 		"total":    total,
 		"books":    len(books),
+		"locked":   readPIN(s.cfg.stateDir) != "",
 	})
 }
 
@@ -292,12 +311,10 @@ func (s *server) putBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dst := filepath.Join(s.cfg.dir, name)
-	if fi, err := os.Stat(dst); err == nil && r.ContentLength >= 0 && fi.Size() == r.ContentLength {
+	if fi, err := os.Stat(filepath.Join(s.cfg.dir, name)); err == nil && r.ContentLength >= 0 && fi.Size() == r.ContentLength {
 		writeJSON(w, map[string]any{"name": name, "skipped": true})
 		return
 	}
-	dst = uniquePath(dst)
 
 	os.MkdirAll(s.cfg.dir, 0o755)
 	tmp, err := os.CreateTemp(s.cfg.dir, ".ezkobo-*.part")
@@ -315,17 +332,26 @@ func (s *server) putBook(w http.ResponseWriter, r *http.Request) {
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
-	if err == nil {
-		os.Chmod(tmp.Name(), 0o644)
-		err = os.Rename(tmp.Name(), dst)
-	}
 	if err != nil {
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
-	log.Printf("ezkobo: received %s (%d bytes)", filepath.Base(dst), n)
-	toast("Received " + filepath.Base(dst))
-	writeJSON(w, map[string]any{"name": filepath.Base(dst), "size": n})
+
+	// Fix metadata, convert to KEPUB and rename, per this Kobo's settings.
+	res := processBook(r.Context(), s.loadSettings(), tmp.Name(), name)
+	dst := filepath.Join(s.cfg.dir, res.Name)
+	if _, err := os.Stat(dst); err == nil {
+		writeJSON(w, map[string]any{"name": res.Name, "skipped": true})
+		return
+	}
+	os.Chmod(tmp.Name(), 0o644)
+	if err := os.Rename(tmp.Name(), dst); err != nil {
+		httpError(w, err, http.StatusInternalServerError)
+		return
+	}
+	log.Printf("ezkobo: received %s as %s (%d bytes, kepub=%v, metadata=%q)", name, res.Name, n, res.Converted, res.Metadata)
+	toast("Received " + res.Name)
+	writeJSON(w, map[string]any{"name": res.Name, "size": n, "converted": res.Converted, "metadata": res.Metadata})
 }
 
 func (s *server) deleteBook(w http.ResponseWriter, r *http.Request) {

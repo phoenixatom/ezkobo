@@ -3,3 +3,4 @@
 
 menu_item :main :EzKobo status :cmd_output :9500 :/usr/local/ezkobo/ezkobo start
 menu_item :main :Import new books :nickel_misc :rescan_books
+menu_item :main :EzKobo remove PIN :cmd_output :3000 :/usr/local/ezkobo/ezkobo pin off

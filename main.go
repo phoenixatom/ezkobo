@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -37,6 +38,8 @@ type config struct {
 	onboardLog string
 	rescan     string
 	demo       bool // made-up device details, for screenshots
+	stateDir   string
+	db         string
 }
 
 func main() {
@@ -58,6 +61,8 @@ func main() {
 	// Not on /mnt/onboard: an open file there would block USB mass storage.
 	fs.StringVar(&cfg.logfile, "log", "/tmp/ezkobo.log", "log file")
 	fs.StringVar(&cfg.onboardLog, "onboard-log", "/mnt/onboard/.adds/ezkobo/ezkobo.log", "log copy readable over USB (\"\" to disable)")
+	fs.StringVar(&cfg.stateDir, "state", "/mnt/onboard/.adds/ezkobo", "folder for settings and the PIN")
+	fs.StringVar(&cfg.db, "db", "/mnt/onboard/.kobo/KoboReader.sqlite", "Kobo library database (read-only)")
 	fs.BoolVar(&cfg.demo, "demo", false, "development: report made-up battery, serial and 32 GB storage (for screenshots)")
 	fs.StringVar(&cfg.rescan, "rescan", "auto", "how to make Kobo import new books: auto (NickelDBus if installed) or off")
 	fs.Parse(args)
@@ -72,6 +77,8 @@ func main() {
 		err = stop(cfg)
 	case "status":
 		err = status(cfg, 0)
+	case "pin":
+		err = pinCommand(cfg, fs.Args())
 	default:
 		err = fmt.Errorf("unknown command %q (use start, stop, status or serve)", cmd)
 	}
@@ -142,7 +149,11 @@ func status(cfg config, wait time.Duration) error {
 	if _, p, err := net.SplitHostPort(cfg.addr); err == nil && p != "80" {
 		port = ":" + p
 	}
-	fmt.Printf("EzKobo is running as \"%s\".\n\n", cfg.name)
+	fmt.Printf("EzKobo is running as \"%s\".\n", cfg.name)
+	if pin := readPIN(cfg.stateDir); pin != "" {
+		fmt.Printf("PIN: %s\n", pin)
+	}
+	fmt.Println()
 	if len(ips) == 0 {
 		fmt.Println("WiFi is off. Turn it on and the EzKobo")
 		fmt.Println("app on your phone will find this Kobo.")
@@ -194,4 +205,23 @@ func localIPv4s() []string {
 		}
 	}
 	return out
+}
+
+// pinCommand shows the PIN, or with "off" removes it (from the Kobo's menu,
+// for when the PIN is forgotten).
+func pinCommand(cfg config, args []string) error {
+	path := filepath.Join(cfg.stateDir, "pin")
+	if len(args) > 0 && args[0] == "off" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		fmt.Println("EzKobo PIN removed. Phones can connect without one.")
+		return nil
+	}
+	if pin := readPIN(cfg.stateDir); pin != "" {
+		fmt.Println("EzKobo PIN:", pin)
+	} else {
+		fmt.Println("No EzKobo PIN is set. You can set one in the app.")
+	}
+	return nil
 }
