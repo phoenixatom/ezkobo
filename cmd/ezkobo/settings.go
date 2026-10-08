@@ -118,6 +118,7 @@ func publicSettings(st settings) map[string]any {
 		"kepub":             st.Kepub,
 		"metadata":          st.Metadata,
 		"cleanNames":        st.CleanNames,
+		"name":              st.Name,
 		"providers":         st.Providers,
 		"googleApiKeySet":   st.GoogleAPIKey != "",
 		"hardcoverTokenSet": st.HardcoverToken != "",
@@ -135,6 +136,7 @@ func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 		Kepub          *bool            `json:"kepub"`
 		Metadata       *bool            `json:"metadata"`
 		CleanNames     *bool            `json:"cleanNames"`
+		Name           *string          `json:"name"`
 		Providers      *[]book.Provider `json:"providers"`
 		GoogleAPIKey   *string          `json:"googleApiKey"`
 		HardcoverToken *string          `json:"hardcoverToken"`
@@ -152,6 +154,14 @@ func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.CleanNames != nil {
 		st.CleanNames = *req.CleanNames
+	}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if len([]rune(name)) > 40 {
+			httpError(w, errors.New("names can be up to 40 characters"), http.StatusBadRequest)
+			return
+		}
+		st.Name = name
 	}
 	if req.Providers != nil {
 		st.Providers = book.NormalizeProviders(*req.Providers)

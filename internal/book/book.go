@@ -24,6 +24,8 @@ type Options struct {
 	CleanNames bool `json:"cleanNames"`
 	// Where to look up details, in order. Each can be switched off.
 	Providers []Provider `json:"providers"`
+	// Name shown in the app, e.g. "Atom's Libra". Empty means automatic.
+	Name string `json:"name,omitempty"`
 	// Optional Google Books API key; keyless requests share a public daily
 	// quota that is often used up. Never sent back to clients.
 	GoogleAPIKey string `json:"googleApiKey,omitempty"`

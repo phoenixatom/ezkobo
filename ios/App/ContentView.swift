@@ -24,6 +24,12 @@ struct ContentView: View {
 
     private func model(_ kobo: Kobo) -> String { finder.info[kobo.id]?.model ?? kobo.model }
 
+    /// The name set in Settings, or the model.
+    private func name(_ kobo: Kobo) -> String {
+        if let n = finder.info[kobo.id]?.displayName, !n.isEmpty { return n }
+        return model(kobo)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -35,7 +41,7 @@ struct ContentView: View {
                 }
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(selected.map(model) ?? "EzKobo")
+            .navigationTitle(selected.map(name) ?? "EzKobo")
             .navigationSubtitle(subtitle)
             .toolbarTitleDisplayMode(.inlineLarge)
             .toolbarTitleMenu {
@@ -82,12 +88,12 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showSettings, onDismiss: { Task { await loadBooks() } }) {
                 if let selected {
-                    SettingsView(kobo: selected, model: model(selected), finder: finder)
+                    SettingsView(kobo: selected, model: name(selected), finder: finder)
                 }
             }
             .sheet(item: $pinPrompt) { kobo in
                 PINEntryView(title: "Enter PIN",
-                             message: "\(model(kobo)) has a PIN. You can see it under EzKobo status in the Kobo’s menu.",
+                             message: "\(name(kobo)) has a PIN. You can see it under EzKobo status in the Kobo’s menu.",
                              button: "Unlock") { pin in
                     await unlock(kobo, with: pin)
                 }
@@ -115,7 +121,7 @@ struct ContentView: View {
             }
 
             if finder.unreachable.contains(kobo.id) {
-                MascotMessage(title: "\(model(kobo)) Is Asleep",
+                MascotMessage(title: "\(name(kobo)) Is Asleep",
                               message: "Wake it up and turn on Wi‑Fi to send books and see your reading.",
                               size: 150)
                     .padding(.vertical, 30)
@@ -138,47 +144,58 @@ struct ContentView: View {
     }
 
     /// One tap to switch Kobos: a capsule per Kobo, the selected one filled.
-    private func koboSwitcher(selected: Kobo) -> some View {
-        ScrollView(.horizontal) {
+    /// Up to three fit on screen; only more than that scroll.
+    @ViewBuilder private func koboSwitcher(selected: Kobo) -> some View {
+        let buttons = GlassEffectContainer(spacing: 10) {
             HStack(spacing: 10) {
                 ForEach(finder.kobos) { kobo in
-                    let isSelected = kobo.id == selected.id
-                    Button {
-                        withAnimation(.snappy) { selectedID = kobo.id }
-                    } label: {
-                        HStack(spacing: 8) {
-                            DeviceGlyph(model: model(kobo))
-                                .scaleEffect(0.55)
-                                .frame(width: 20, height: 22)
-                            Text(switcherName(kobo))
-                                .font(.subheadline.weight(.semibold))
-                        }
-                        .padding(.horizontal, 4)
-                    }
-                    .buttonStyle(isSelected ? AnyPrimitiveButtonStyle(.glassProminent) : AnyPrimitiveButtonStyle(.glass))
-                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    switcherButton(kobo, selected: kobo.id == selected.id)
                 }
             }
-            .padding(.horizontal, 20)
         }
-        .scrollIndicators(.hidden)
-        .padding(.horizontal, -20)
+        if finder.kobos.count > 3 {
+            ScrollView(.horizontal) {
+                buttons.padding(.horizontal, 20)
+            }
+            .scrollIndicators(.hidden)
+            .scrollEdgeEffectHidden(true, for: .horizontal)
+            .padding(.horizontal, -20)
+        } else {
+            buttons.frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
-    /// The model, plus the end of the serial when two Kobos share a model.
-    private func switcherName(_ kobo: Kobo) -> String {
-        let name = model(kobo)
-        let sameModel = finder.kobos.filter { model($0) == name }.count > 1
-        if sameModel, let serial = finder.info[kobo.id]?.serial, !serial.isEmpty {
-            return "\(name) \(serial)"
+    private func switcherButton(_ kobo: Kobo, selected isSelected: Bool) -> some View {
+        Button {
+            withAnimation(.snappy) { selectedID = kobo.id }
+        } label: {
+            HStack(spacing: 8) {
+                DeviceGlyph(model: model(kobo))
+                    .scaleEffect(0.55)
+                    .frame(width: 20, height: 22)
+                Text(switcherName(kobo))
+                    .font(.subheadline.weight(.semibold))
+            }
+            .padding(.horizontal, 4)
         }
-        return name
+        .buttonStyle(isSelected ? AnyPrimitiveButtonStyle(.glassProminent) : AnyPrimitiveButtonStyle(.glass))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// The Kobo's name, plus the end of its serial if two share a name.
+    private func switcherName(_ kobo: Kobo) -> String {
+        let title = name(kobo)
+        let clash = finder.kobos.filter { name($0) == title }.count > 1
+        if clash, let serial = finder.info[kobo.id]?.serial, !serial.isEmpty {
+            return "\(title) \(serial)"
+        }
+        return title
     }
 
     @ViewBuilder private func readingCards(_ kobo: Kobo) -> some View {
         if let summary {
             NavigationLink {
-                StatsView(client: client, summary: summary, model: model(kobo))
+                StatsView(client: client, summary: summary, model: name(kobo))
             } label: {
                 StatsStrip(stats: summary.stats)
                     .foregroundStyle(.primary)
@@ -213,7 +230,7 @@ struct ContentView: View {
 
     private func libraryCard(_ kobo: Kobo) -> some View {
         NavigationLink {
-            LibraryView(client: client, model: model(kobo), books: books,
+            LibraryView(client: client, model: name(kobo), books: books,
                         delete: { await delete($0, from: kobo) }, reload: { await loadBooks() })
         } label: {
             LibraryCard(client: client, covers: libraryCovers, count: books.count,
@@ -242,11 +259,7 @@ struct ContentView: View {
         return parts.joined(separator: " · ")
     }
 
-    private func menuLabel(_ kobo: Kobo) -> String {
-        guard let info = finder.info[kobo.id] else { return model(kobo) }
-        let serial = info.serial.isEmpty ? "" : " \(info.serial)"
-        return "\(info.model)\(serial)"
-    }
+    private func menuLabel(_ kobo: Kobo) -> String { switcherName(kobo) }
 
     @ViewBuilder private var searchingView: some View {
         if finder.permissionDenied {

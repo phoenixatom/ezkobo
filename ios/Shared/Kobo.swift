@@ -27,10 +27,14 @@ struct KoboInfo: Decodable, Hashable {
     let books: Int
     /// Whether this Kobo requires a PIN (nil from older agents).
     let locked: Bool?
+    /// What to call it: the name set in Settings, or the model.
+    let displayName: String?
 }
 
 /// Per-Kobo settings, stored on the Kobo itself.
 struct KoboSettings: Codable, Hashable {
+    /// Custom name; empty means automatic.
+    var name: String?
     var kepub: Bool
     var metadata: Bool
     var cleanNames: Bool

@@ -29,6 +29,7 @@ struct SettingsView: View {
                     }
                 }
                 if let settings {
+                    nameSection(settings)
                     arrivalSection(settings)
                     pinSection
                 } else if error == nil {
@@ -39,7 +40,10 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") {
+                        // Save a name that's still being typed.
+                        Task { await save(); await finder.refresh(kobo); dismiss() }
+                    }
                 }
             }
             .task { await load() }
@@ -55,6 +59,23 @@ struct SettingsView: View {
             } message: {
                 Text("Anyone on your Wi‑Fi will be able to see, send and delete books on this Kobo.")
             }
+        }
+    }
+
+    private func nameSection(_ current: KoboSettings) -> some View {
+        Section {
+            TextField(model, text: Binding {
+                settings?.name ?? ""
+            } set: { value in
+                settings?.name = value
+            })
+            .textInputAutocapitalization(.words)
+            .submitLabel(.done)
+            .onSubmit { Task { await save(); await finder.refresh(kobo) } }
+        } header: {
+            Text("Name")
+        } footer: {
+            Text("Helps tell your Kobos apart, like “Atom’s Libra”. Leave empty to use the model name.")
         }
     }
 

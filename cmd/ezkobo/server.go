@@ -295,6 +295,8 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 		"total":    total,
 		"books":    len(books),
 		"locked":   readPIN(s.cfg.stateDir) != "",
+		// What to call this Kobo: the name set in the app, else the model.
+		"displayName": s.displayName(),
 	})
 }
 
@@ -422,4 +424,12 @@ func httpError(w http.ResponseWriter, err error, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
+// displayName is the name set in the app, or the model.
+func (s *server) displayName() string {
+	if n := s.loadSettings().Name; n != "" {
+		return n
+	}
+	return s.cfg.model
 }
