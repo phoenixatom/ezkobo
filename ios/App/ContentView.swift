@@ -144,24 +144,23 @@ struct ContentView: View {
     }
 
     /// One tap to switch Kobos: a capsule per Kobo, the selected one filled.
-    /// Up to three fit on screen; only more than that scroll.
-    @ViewBuilder private func koboSwitcher(selected: Kobo) -> some View {
-        let buttons = GlassEffectContainer(spacing: 10) {
+    /// Pills grow to fit their names; the row scrolls only when they don't fit.
+    private func koboSwitcher(selected: Kobo) -> some View {
+        let row = GlassEffectContainer(spacing: 10) {
             HStack(spacing: 10) {
                 ForEach(finder.kobos) { kobo in
                     switcherButton(kobo, selected: kobo.id == selected.id)
                 }
             }
         }
-        if finder.kobos.count > 3 {
+        return ViewThatFits(in: .horizontal) {
+            row.frame(maxWidth: .infinity, alignment: .leading)
             ScrollView(.horizontal) {
-                buttons.padding(.horizontal, 20)
+                row.padding(.horizontal, 20)
             }
             .scrollIndicators(.hidden)
             .scrollEdgeEffectHidden(true, for: .horizontal)
             .padding(.horizontal, -20)
-        } else {
-            buttons.frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -175,6 +174,8 @@ struct ContentView: View {
                     .frame(width: 20, height: 22)
                 Text(switcherName(kobo))
                     .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .fixedSize()
             }
             .padding(.horizontal, 4)
         }

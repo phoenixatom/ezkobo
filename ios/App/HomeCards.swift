@@ -43,7 +43,6 @@ struct ContinueReadingCard: View {
                     .font(.title3.weight(.semibold))
                     .lineLimit(3)
                     .foregroundStyle(.primary)
-                    .padding(.trailing, 44) // room for the mascot
                 if let author = book.author, !author.isEmpty {
                     Text(author)
                         .foregroundStyle(.secondary)
@@ -67,16 +66,16 @@ struct ContinueReadingCard: View {
         }
         .card()
         .contentShape(.rect(cornerRadius: 26))
-        .overlay(alignment: .topTrailing) {
-            // The mascot sits on the card's edge, keeping you company.
+        .background(alignment: .topTrailing) {
+            // The mascot peeks over the card from behind it.
             Image("Mascot")
                 .resizable()
                 .scaledToFit()
-                .frame(height: 74)
-                .offset(x: -14, y: -50)
+                .frame(height: 104)
+                .offset(x: -22, y: -66)
                 .accessibilityHidden(true)
         }
-        .padding(.top, 40)
+        .padding(.top, 66)
     }
 }
 
