@@ -363,6 +363,7 @@ async function showBook(id) {
       <div class="section-header">${highlights.length ? `Highlights (${highlights.length})` : 'Highlights'}</div>
       <div class="group">${highlights.length ? highlights.map((h) => `
         <div class="row"><div class="grow">
+          ${h.position != null ? `<div class="note" style="margin: 0 0 4px">${Math.round(h.position)}%</div>` : ''}
           ${h.text ? `<div class="quote">${esc(h.text)}</div>` : ''}
           ${h.note ? `<div class="note" style="margin-top:6px">Note: ${esc(h.note)}</div>` : ''}
         </div></div>`).join('') : '<div class="row muted">Highlights and notes you make on the Kobo appear here.</div>'}</div>`;

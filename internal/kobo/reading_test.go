@@ -30,11 +30,19 @@ func TestBooksAndHighlights(t *testing.T) {
 			1, 42, 3600, 5400, '2026-10-08T19:51:21Z', NULL, NULL, '<p>A novel &amp; a comedy.</p><p>Second.</p>', 'img1')`,
 		`INSERT INTO content VALUES ('store-uuid', 6, 'Persuasion', 'Jane Austen', 2, 100, 7200, 0, '', 'Austen', '6', NULL, 'img2')`,
 		`INSERT INTO content VALUES ('store-uuid!!chapter1', 9, 'Chapter 1', '', 0, 0, 0, 0, '', NULL, NULL, NULL, '')`,
-		`CREATE TABLE Bookmark (VolumeID TEXT, Text TEXT, Annotation TEXT, DateCreated TEXT, Type TEXT, Hidden TEXT, ChapterProgress REAL)`,
-		`INSERT INTO Bookmark VALUES ('store-uuid', ' Second quote ', '', '2026-10-02', 'highlight', 'false', 0.5),
-			('store-uuid', 'First quote', 'My note', '2026-10-01', 'note', 'false', 0.1),
-			('store-uuid', 'Deleted', '', '2026-10-03', 'highlight', 'true', 0.9),
-			('store-uuid', '', '', '2026-10-03', 'dogear', 'false', 0.2)`,
+		`ALTER TABLE content ADD COLUMN BookID TEXT`,
+		`ALTER TABLE content ADD COLUMN VolumeIndex INTEGER`,
+		`ALTER TABLE content ADD COLUMN ___FileSize REAL`,
+		// Two chapters: 25% and 75% of the book.
+		`INSERT INTO content (ContentID, ContentType, Title, BookID, VolumeIndex, ___FileSize) VALUES
+			('store-uuid!ch1', 9, 'Chapter 1', 'store-uuid', 0, 25),
+			('store-uuid!ch2', 9, 'Chapter 2', 'store-uuid', 1, 75)`,
+		`CREATE TABLE Bookmark (VolumeID TEXT, ContentID TEXT, Text TEXT, Annotation TEXT, DateCreated TEXT, Type TEXT, Hidden TEXT, ChapterProgress REAL)`,
+		// Created out of reading order, to check sorting by position.
+		`INSERT INTO Bookmark VALUES ('store-uuid', 'store-uuid!ch2#anchor-7', ' Second quote ', '', '2026-10-01', 'highlight', 'false', 0.5),
+			('store-uuid', 'store-uuid!ch1', 'First quote', 'My note', '2026-10-02', 'note', 'false', 0.2),
+			('store-uuid', 'store-uuid!ch1', 'Deleted', '', '2026-10-03', 'highlight', 'true', 0.9),
+			('store-uuid', 'store-uuid!ch1', '', '', '2026-10-03', 'dogear', 'false', 0.2)`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
@@ -61,5 +69,9 @@ func TestBooksAndHighlights(t *testing.T) {
 	hs, err := Highlights(dbPath, "store-uuid")
 	if err != nil || len(hs) != 2 || hs[0].Text != "First quote" || hs[0].Note != "My note" || hs[1].Text != "Second quote" {
 		t.Fatalf("Highlights = %+v, %v", hs, err)
+	}
+	// 0.2 into a 25% chapter = 5%; half-way through the 75% chapter after it = 62.5%.
+	if hs[0].Position == nil || *hs[0].Position != 5 || hs[1].Position == nil || *hs[1].Position != 62.5 {
+		t.Fatalf("positions = %v, %v", hs[0].Position, hs[1].Position)
 	}
 }

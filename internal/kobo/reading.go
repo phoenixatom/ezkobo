@@ -6,6 +6,7 @@ import (
 	"html"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -38,6 +39,10 @@ type Highlight struct {
 	Note    string `json:"note,omitempty"`
 	Created string `json:"created,omitempty"`
 	Type    string `json:"type"` // "highlight" or "note"
+	// Position in the book, 0–100. The Kobo has no page numbers for sideloaded
+	// books (they depend on the font), so this is where the highlight sits as a
+	// percentage, like the Kobo's own progress. Omitted when unknown.
+	Position *float64 `json:"position,omitempty"`
 }
 
 func openDB(dbPath string) (*sql.DB, error) {
@@ -159,9 +164,11 @@ func Highlights(dbPath, bookID string) ([]Highlight, error) {
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT COALESCE(Text, ''), COALESCE(Annotation, ''), COALESCE(DateCreated, ''), COALESCE(Type, '')
+	chapters := chapterSpans(db, bookID)
+	rows, err := db.Query(`SELECT COALESCE(Text, ''), COALESCE(Annotation, ''), COALESCE(DateCreated, ''), COALESCE(Type, ''),
+		COALESCE(ContentID, ''), COALESCE(ChapterProgress, 0)
 		FROM Bookmark WHERE VolumeID = ? AND COALESCE(Hidden, 'false') <> 'true' AND Type IN ('highlight', 'note')
-		ORDER BY COALESCE(ChapterProgress, 0), DateCreated`, bookID)
+		ORDER BY DateCreated`, bookID)
 	if err != nil {
 		return nil, err
 	}
@@ -169,15 +176,74 @@ func Highlights(dbPath, bookID string) ([]Highlight, error) {
 	var hs []Highlight
 	for rows.Next() {
 		var h Highlight
-		if rows.Scan(&h.Text, &h.Note, &h.Created, &h.Type) == nil {
+		var chapter string
+		var within float64
+		if rows.Scan(&h.Text, &h.Note, &h.Created, &h.Type, &chapter, &within) == nil {
 			h.Text = strings.TrimSpace(h.Text)
 			h.Note = strings.TrimSpace(h.Note)
+			if sp, ok := chapters.spans[withoutAnchor(chapter)]; ok && chapters.total > 0 {
+				pos := (sp.start + min(max(within, 0), 1)*sp.size) / chapters.total * 100
+				h.Position = &pos
+			}
 			if h.Text != "" || h.Note != "" {
 				hs = append(hs, h)
 			}
 		}
 	}
-	return hs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// In reading order; any without a known position go last, by date.
+	sort.SliceStable(hs, func(i, j int) bool {
+		a, b := hs[i].Position, hs[j].Position
+		switch {
+		case a == nil || b == nil:
+			return a != nil && b == nil
+		default:
+			return *a < *b
+		}
+	})
+	return hs, nil
+}
+
+// withoutAnchor drops a "#fragment": highlights can point inside a chapter
+// ("part0012.html#AFM62-…") while the chapter is stored as "part0012.html".
+func withoutAnchor(id string) string {
+	if i := strings.LastIndexByte(id, '#'); i > 0 {
+		return id[:i]
+	}
+	return id
+}
+
+type span struct{ start, size float64 }
+
+type chapterMap struct {
+	spans map[string]span
+	total float64
+}
+
+// chapterSpans returns where each chapter of a book starts and how big it
+// is. Nickel stores each chapter's share of the book's size (___FileSize);
+// adding them up in reading order gives each chapter's start.
+func chapterSpans(db *sql.DB, bookID string) chapterMap {
+	m := chapterMap{spans: map[string]span{}}
+	rows, err := db.Query(`SELECT ContentID, COALESCE(___FileSize, 0) FROM content
+		WHERE ContentType = 9 AND BookID = ? ORDER BY VolumeIndex`, bookID)
+	if err != nil {
+		return m // older firmware: positions are left out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var size float64
+		if rows.Scan(&id, &size) == nil && size > 0 {
+			if _, seen := m.spans[withoutAnchor(id)]; !seen {
+				m.spans[withoutAnchor(id)] = span{start: m.total, size: size}
+			}
+			m.total += size
+		}
+	}
+	return m
 }
 
 // CoverPath is where Nickel keeps a book's cover (a JPEG), under the user

@@ -52,6 +52,10 @@ struct Highlight: Decodable, Hashable, Identifiable {
     let note: String?
     let created: String?
     let type: String
+    /// Where it is in the book, 0–100 (Kobo has no page numbers for sideloaded books).
+    let position: Double?
+
+    var positionLabel: String? { position.map { "\(Int($0.rounded()))%" } }
     var id: String { (created ?? "") + (text ?? "") + (note ?? "") }
 }
 

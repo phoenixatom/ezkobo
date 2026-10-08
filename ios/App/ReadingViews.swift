@@ -182,6 +182,12 @@ struct BookDetailView: View {
             }
             ForEach(highlights) { h in
                 VStack(alignment: .leading, spacing: 6) {
+                    if let position = h.positionLabel {
+                        Text(position)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("\(position) through the book")
+                    }
                     if let text = h.text, !text.isEmpty {
                         Text(text)
                             .padding(.leading, 10)
@@ -213,6 +219,7 @@ struct BookDetailView: View {
         if let author = detail.book.author, !author.isEmpty { lines.append(author) }
         lines.append("")
         for h in detail.highlights {
+            if let position = h.positionLabel { lines.append("[\(position)]") }
             if let text = h.text, !text.isEmpty { lines.append("“\(text)”") }
             if let note = h.note, !note.isEmpty { lines.append("Note: \(note)") }
             lines.append("")
