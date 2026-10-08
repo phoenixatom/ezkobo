@@ -1,4 +1,6 @@
-package main
+// Package kobo reads facts about the Kobo it runs on: model, serial,
+// firmware, battery, storage, and its library database.
+package kobo
 
 import (
 	"os"
@@ -19,16 +21,17 @@ var koboModels = map[string]string{
 	"393": "Clara Colour", "395": "Clara BW",
 }
 
-type deviceInfo struct {
+// Device identifies the Kobo.
+type Device struct {
 	Model    string `json:"model"`
 	Serial   string `json:"serial"` // last 4 characters only
 	Firmware string `json:"firmware"`
 }
 
-// readDevice parses /mnt/onboard/.kobo/version, which looks like
+// ReadDevice parses /mnt/onboard/.kobo/version, which looks like
 // "N4180XXXXXXXX,4.9.77,4.38.21908,4.9.77,4.9.77,00000000-0000-0000-0000-000000000390".
-func readDevice() deviceInfo {
-	d := deviceInfo{Model: "Kobo"}
+func ReadDevice() Device {
+	d := Device{Model: "Kobo"}
 	b, err := os.ReadFile("/mnt/onboard/.kobo/version")
 	if err != nil {
 		return d
@@ -48,10 +51,10 @@ func readDevice() deviceInfo {
 	return d
 }
 
-// deviceName is the advertised name, e.g. "Libra Colour 1A2B". The serial
+// Name is the advertised name, e.g. "Libra Colour 1A2B". The serial
 // suffix keeps two Kobos of the same model apart.
-func deviceName() string {
-	d := readDevice()
+func Name() string {
+	d := ReadDevice()
 	if d.Serial != "" {
 		return d.Model + " " + d.Serial
 	}
@@ -61,20 +64,22 @@ func deviceName() string {
 	return "Kobo"
 }
 
-// defaultHost is the mDNS host name, unique per device.
-func defaultHost() string {
-	if s := readDevice().Serial; s != "" {
+// DefaultHost is the mDNS host name, unique per device.
+func DefaultHost() string {
+	if s := ReadDevice().Serial; s != "" {
 		return "kobo-" + strings.ToLower(s)
 	}
 	return "ezkobo"
 }
 
-type battery struct {
+// Battery is the charge level.
+type Battery struct {
 	Level    int  `json:"level"`
 	Charging bool `json:"charging"`
 }
 
-func readBattery() *battery {
+// ReadBattery returns nil when there is no battery (off-device).
+func ReadBattery() *Battery {
 	dirs, _ := filepath.Glob("/sys/class/power_supply/*")
 	for _, d := range dirs {
 		if t, _ := os.ReadFile(filepath.Join(d, "type")); strings.TrimSpace(string(t)) != "Battery" {
@@ -90,12 +95,13 @@ func readBattery() *battery {
 		}
 		st, _ := os.ReadFile(filepath.Join(d, "status"))
 		s := strings.TrimSpace(string(st))
-		return &battery{level, s == "Charging" || s == "Full"}
+		return &Battery{level, s == "Charging" || s == "Full"}
 	}
 	return nil
 }
 
-func diskSpace(dir string) (free, total uint64) {
+// DiskSpace reports free and total bytes of the filesystem holding dir.
+func DiskSpace(dir string) (free, total uint64) {
 	var st syscall.Statfs_t
 	if syscall.Statfs(dir, &st) != nil {
 		return 0, 0

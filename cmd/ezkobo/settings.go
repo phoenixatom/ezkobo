@@ -10,60 +10,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/phoenixatom/ezkobo/internal/book"
 )
 
 // Settings are stored on the Kobo itself, so every client (app, Share sheet,
 // browser) gets the same behaviour, and each Kobo can be set up differently.
-type settings struct {
-	// Convert EPUBs to Kobo's KEPUB format on arrival.
-	Kepub bool `json:"kepub"`
-	// Look up title, author and cover on Open Library when a book's own
-	// metadata is missing or messy. Sends the title and author to Open Library.
-	Metadata bool `json:"metadata"`
-	// Save books as "Author - Title".
-	CleanNames bool `json:"cleanNames"`
-	// Where to look up details, in order. Each can be switched off.
-	Providers []provider `json:"providers"`
-	// Optional Google Books API key; keyless requests share a public daily
-	// quota that is often used up. Never sent back to clients.
-	GoogleAPIKey string `json:"googleApiKey,omitempty"`
-	// Hardcover API token (required for Hardcover). Never sent back to clients.
-	HardcoverToken string `json:"hardcoverToken,omitempty"`
-}
-
-type provider struct {
-	ID      string `json:"id"`
-	Enabled bool   `json:"enabled"`
-}
-
-// Default order, best first for recent and translated books. Hardcover needs
-// a token, so it's off until one is added.
-var allProviders = []provider{
-	{"apple", true}, {"openlibrary", true}, {"google", true}, {"hardcover", false},
-}
+type settings = book.Options
 
 var defaultSettings = settings{Kepub: true, Metadata: true, CleanNames: true}
-
-// normalizeProviders keeps known providers in the given order, then appends
-// any missing ones with their defaults.
-func normalizeProviders(ps []provider) []provider {
-	var out []provider
-	seen := map[string]bool{}
-	for _, p := range ps {
-		for _, known := range allProviders {
-			if p.ID == known.ID && !seen[p.ID] {
-				out = append(out, p)
-				seen[p.ID] = true
-			}
-		}
-	}
-	for _, known := range allProviders {
-		if !seen[known.ID] {
-			out = append(out, known)
-		}
-	}
-	return out
-}
 
 func (s *server) settingsPath() string { return filepath.Join(s.cfg.stateDir, "settings.json") }
 func (s *server) pinPath() string      { return filepath.Join(s.cfg.stateDir, "pin") }
@@ -73,7 +28,7 @@ func (s *server) loadSettings() settings {
 	if b, err := os.ReadFile(s.settingsPath()); err == nil {
 		json.Unmarshal(b, &st)
 	}
-	st.Providers = normalizeProviders(st.Providers)
+	st.Providers = book.NormalizeProviders(st.Providers)
 	return st
 }
 
@@ -173,12 +128,12 @@ func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {
 // googleApiKey removes the key.
 func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Kepub          *bool       `json:"kepub"`
-		Metadata       *bool       `json:"metadata"`
-		CleanNames     *bool       `json:"cleanNames"`
-		Providers      *[]provider `json:"providers"`
-		GoogleAPIKey   *string     `json:"googleApiKey"`
-		HardcoverToken *string     `json:"hardcoverToken"`
+		Kepub          *bool            `json:"kepub"`
+		Metadata       *bool            `json:"metadata"`
+		CleanNames     *bool            `json:"cleanNames"`
+		Providers      *[]book.Provider `json:"providers"`
+		GoogleAPIKey   *string          `json:"googleApiKey"`
+		HardcoverToken *string          `json:"hardcoverToken"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		httpError(w, err, http.StatusBadRequest)
@@ -195,7 +150,7 @@ func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 		st.CleanNames = *req.CleanNames
 	}
 	if req.Providers != nil {
-		st.Providers = normalizeProviders(*req.Providers)
+		st.Providers = book.NormalizeProviders(*req.Providers)
 	}
 	if req.GoogleAPIKey != nil {
 		key := strings.TrimSpace(*req.GoogleAPIKey)

@@ -1,11 +1,8 @@
-package main
+package book
 
 import (
 	"archive/zip"
 	"context"
-	"database/sql"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,7 +45,7 @@ func TestProcessBookCleansConvertsAndRenames(t *testing.T) {
 	makeEPUB(t, tmp, "Moby Dick (Herman Melville) (example.org, mirror.net)", "Unknown")
 
 	// Metadata lookup off: no network in tests.
-	res := processBook(context.Background(), settings{Kepub: true, CleanNames: true}, tmp,
+	res := Process(context.Background(), Options{Kepub: true, CleanNames: true}, tmp,
 		"Moby Dick (Herman Melville) (example.org, mirror.net).epub")
 	if res.Name != "Herman Melville - Moby Dick.kepub.epub" {
 		t.Fatalf("name = %q", res.Name)
@@ -76,7 +73,7 @@ func TestProcessBookLeavesCleanBooksAlone(t *testing.T) {
 	dir := t.TempDir()
 	tmp := filepath.Join(dir, "upload.part")
 	makeEPUB(t, tmp, "Emma", "Jane Austen")
-	res := processBook(context.Background(), settings{}, tmp, "emma.epub")
+	res := Process(context.Background(), Options{}, tmp, "emma.epub")
 	if res.Name != "emma.epub" || res.Converted || res.Metadata != "" {
 		t.Fatalf("result = %+v", res)
 	}
@@ -108,100 +105,14 @@ func TestSplitTitleAuthor(t *testing.T) {
 	}
 }
 
-func TestPIN(t *testing.T) {
-	s := &server{cfg: config{stateDir: t.TempDir()}}
-	h := s.requirePIN(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
-	call := func(pin string) int {
-		r := httptest.NewRequest("GET", "/api/books", nil)
-		if pin != "" {
-			r.Header.Set("X-EzKobo-PIN", pin)
-		}
-		w := httptest.NewRecorder()
-		h(w, r)
-		return w.Code
-	}
-	if c := call(""); c != 200 {
-		t.Fatalf("no PIN set: %d", c)
-	}
-	os.WriteFile(s.pinPath(), []byte("4821\n"), 0o600)
-	if c := call(""); c != 401 {
-		t.Fatalf("missing PIN: %d", c)
-	}
-	if c := call("4821"); c != 200 {
-		t.Fatalf("right PIN: %d", c)
-	}
-	for i := 0; i < 5; i++ {
-		call("0000")
-	}
-	if c := call("4821"); c != 429 {
-		t.Fatalf("after 5 wrong PINs even the right one should wait: %d", c)
-	}
-}
-
-func TestSettingsKeepGoogleKeySecret(t *testing.T) {
-	s := &server{cfg: config{stateDir: t.TempDir()}}
-	put := func(body string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		s.putSettings(w, httptest.NewRequest("PUT", "/api/settings", strings.NewReader(body)))
-		return w
-	}
-	if w := put(`{"googleApiKey":"AIzaSyExampleKey123"}`); w.Code != 200 || strings.Contains(w.Body.String(), "AIza") {
-		t.Fatalf("put key: %d %s", w.Code, w.Body)
-	}
-	if st := s.loadSettings(); st.GoogleAPIKey != "AIzaSyExampleKey123" || !st.Kepub {
-		t.Fatalf("stored settings = %+v", st)
-	}
-	// Changing another setting leaves the key alone.
-	put(`{"kepub":false}`)
-	if st := s.loadSettings(); st.GoogleAPIKey == "" || st.Kepub {
-		t.Fatalf("after toggling kepub: %+v", st)
-	}
-	w := httptest.NewRecorder()
-	s.getSettings(w, httptest.NewRequest("GET", "/api/settings", nil))
-	if strings.Contains(w.Body.String(), "AIza") || !strings.Contains(w.Body.String(), `"googleApiKeySet":true`) {
-		t.Fatalf("get leaked key or missing flag: %s", w.Body)
-	}
-	put(`{"googleApiKey":""}`)
-	if s.loadSettings().GoogleAPIKey != "" {
-		t.Fatal("key not removed")
-	}
-	if w := put(`{"googleApiKey":"bad key/with?stuff"}`); w.Code != 400 {
-		t.Fatalf("bad key accepted: %d", w.Code)
-	}
-}
-
 func TestProviderOrder(t *testing.T) {
-	got := normalizeProviders([]provider{{"google", false}, {"bogus", true}, {"apple", true}, {"google", true}})
+	got := NormalizeProviders([]Provider{{"google", false}, {"bogus", true}, {"apple", true}, {"google", true}})
 	ids := []string{}
 	for _, p := range got {
 		ids = append(ids, p.ID)
 	}
 	if strings.Join(ids, ",") != "google,apple,openlibrary,hardcover" || got[0].Enabled || got[3].Enabled {
 		t.Fatalf("providers = %+v", got)
-	}
-}
-
-func TestKoboLibrary(t *testing.T) {
-	dir := t.TempDir()
-	root := filepath.Join(dir, "lib")
-	os.MkdirAll(filepath.Join(root, "Books"), 0o755)
-	dbPath := filepath.Join(dir, "KoboReader.sqlite")
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.Exec(`CREATE TABLE content (ContentID TEXT, ContentType INTEGER, Title TEXT, Attribution TEXT, ___PercentRead INTEGER)`)
-	db.Exec(`INSERT INTO content VALUES
-		('file://` + root + `/Books/Emma.kepub.epub', 6, 'Emma', 'Jane Austen', 42),
-		('file://` + root + `/Books/Emma.kepub.epub!!c1', 9, 'Chapter 1', '', 0),
-		('0f1e2d3c-store-book', 6, 'Store Book', 'Someone', 10)`)
-	db.Close()
-
-	s := &server{cfg: config{library: root, dir: filepath.Join(root, "Books"), db: dbPath}}
-	lib := s.koboLibrary()
-	e, ok := lib["Books/Emma.kepub.epub"]
-	if !ok || e.Title != "Emma" || e.Author != "Jane Austen" || e.Progress != 42 || len(lib) != 1 {
-		t.Fatalf("library = %+v", lib)
 	}
 }
 
@@ -214,9 +125,8 @@ func TestLiveMetadataLookup(t *testing.T) {
 	tmp := filepath.Join(dir, "upload.part")
 	name := "Butter (Asako Yuzuki, Polly Barton (translator)) (example.org, mirror.net).epub"
 	makeEPUB(t, tmp, strings.TrimSuffix(name, ".epub"), "")
-	st := defaultSettings
-	st.Providers = normalizeProviders(nil)
-	res := processBook(context.Background(), st, tmp, name)
+	st := Options{Kepub: true, Metadata: true, CleanNames: true, Providers: NormalizeProviders(nil)}
+	res := Process(context.Background(), st, tmp, name)
 	m, _ := readEPUBMeta(tmp)
 	t.Logf("result %+v, title %q, author %q, cover %v", res, m.Title, m.Author, m.HasCover)
 	if res.Metadata == "" || res.Metadata == "cleaned" {

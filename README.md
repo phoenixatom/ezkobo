@@ -205,20 +205,16 @@ make backup   # back up every plugged-in Kobo
 Pretend to be a specific Kobo:
 
 ```sh
-go run . serve -addr :8081 -dir tmp/libra -rescan off \
+go run ./cmd/ezkobo serve -addr :8081 -dir tmp/libra -state tmp/libra-state -rescan off \
   -model "Libra Colour" -name "Libra Colour 7F3A" -host kobo-7f3a
 ```
 
 | Path | What |
 |---|---|
-| `server.go` | HTTP API: `/api/info`, `/api/books`, upload, delete, rescan |
-| `mdns.go` | mDNS / DNS‑SD responder advertising `_ezkobo._tcp` |
-| `device.go` | Kobo model, serial, battery, storage |
-| `rescan.go` | Library import via NickelDBus, if installed |
-| `process.go` | KEPUB conversion, metadata clean-up and lookup, renaming |
-| `library.go` | Reads the Kobo's library database (read-only) |
-| `settings.go` | Per-Kobo settings and the optional PIN |
-| `web/index.html` | Browser upload page (`http://kobo-xxxx.local`) |
+| `cmd/ezkobo/` | The agent: command line, HTTP API, settings and PIN, browser page (`web/`) |
+| `internal/mdns/` | mDNS / DNS‑SD responder advertising `_ezkobo._tcp` |
+| `internal/kobo/` | Kobo model, serial, battery, storage, library database (read-only) |
+| `internal/book/` | KEPUB conversion, metadata clean-up and lookup, file names |
 | `kobo/` | Boot script and udev rule |
 | `scripts/` | Install, backup, packaging, app icon |
 | `ios/` | iPhone app, Share extension, shared code |

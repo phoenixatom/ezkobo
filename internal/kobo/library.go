@@ -1,4 +1,4 @@
-package main
+package kobo
 
 import (
 	"database/sql"
@@ -9,21 +9,21 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// libraryEntry is what the Kobo's own library knows about a book file.
-type libraryEntry struct {
+// LibraryEntry is what the Kobo's own library knows about a book file.
+type LibraryEntry struct {
 	Title    string
 	Author   string
 	Progress int // percent read
 }
 
-// koboLibrary reads Nickel's database (read-only) and returns its sideloaded
-// books keyed by path relative to the library root, e.g. "Books/Dune.epub".
+// Library reads Nickel's database at dbPath (read-only) and returns its
+// sideloaded books keyed by path relative to root, e.g. "Books/Dune.epub".
 // It returns nil when the database isn't available (off-device, USB mode).
-func (s *server) koboLibrary() map[string]libraryEntry {
-	if _, err := os.Stat(s.cfg.db); err != nil {
+func Library(dbPath, root string) map[string]LibraryEntry {
+	if _, err := os.Stat(dbPath); err != nil {
 		return nil
 	}
-	db, err := sql.Open("sqlite", "file:"+s.cfg.db+"?mode=ro&_pragma=busy_timeout(2000)")
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(2000)")
 	if err != nil {
 		return nil
 	}
@@ -37,11 +37,11 @@ func (s *server) koboLibrary() map[string]libraryEntry {
 	}
 	defer rows.Close()
 
-	prefix := "file://" + strings.TrimSuffix(s.libraryRoot(), "/") + "/"
-	lib := map[string]libraryEntry{}
+	prefix := "file://" + strings.TrimSuffix(root, "/") + "/"
+	lib := map[string]LibraryEntry{}
 	for rows.Next() {
 		var id string
-		var e libraryEntry
+		var e LibraryEntry
 		if rows.Scan(&id, &e.Title, &e.Author, &e.Progress) != nil {
 			continue
 		}

@@ -22,6 +22,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/phoenixatom/ezkobo/internal/kobo"
+	"github.com/phoenixatom/ezkobo/internal/mdns"
 )
 
 type config struct {
@@ -53,9 +56,9 @@ func main() {
 	fs.StringVar(&cfg.addr, "addr", ":80", "listen address")
 	fs.StringVar(&cfg.dir, "dir", "/mnt/onboard/Books", "folder where received books are saved")
 	fs.StringVar(&cfg.library, "library", "/mnt/onboard", "folder whose books are listed (falls back to -dir if missing)")
-	fs.StringVar(&cfg.host, "host", defaultHost(), "mDNS name (reachable as http://<host>.local)")
-	fs.StringVar(&cfg.name, "name", deviceName(), "name shown in the phone app")
-	fs.StringVar(&cfg.model, "model", readDevice().Model, "Kobo model shown in the phone app")
+	fs.StringVar(&cfg.host, "host", kobo.DefaultHost(), "mDNS name (reachable as http://<host>.local)")
+	fs.StringVar(&cfg.name, "name", kobo.Name(), "name shown in the phone app")
+	fs.StringVar(&cfg.model, "model", kobo.ReadDevice().Model, "Kobo model shown in the phone app")
 	fs.DurationVar(&cfg.idle, "idle", 0, "stop after this long without requests (0 = never)")
 	fs.StringVar(&cfg.pidfile, "pidfile", "/tmp/ezkobo.pid", "pid file")
 	// Not on /mnt/onboard: an open file there would block USB mass storage.
@@ -139,10 +142,10 @@ func status(cfg config, wait time.Duration) error {
 		return errors.New(msg)
 	}
 	deadline := time.Now().Add(wait)
-	ips := localIPv4s()
+	ips := mdns.LocalIPv4s()
 	for len(ips) == 0 && time.Now().Before(deadline) {
 		time.Sleep(500 * time.Millisecond)
-		ips = localIPv4s()
+		ips = mdns.LocalIPv4s()
 	}
 
 	port := ""
@@ -187,24 +190,6 @@ func running(cfg config) bool {
 		return strings.Contains(string(cmd), "ezkobo")
 	}
 	return true // no /proc (macOS): trust the signal check
-}
-
-// localIPv4s returns the non-loopback IPv4 addresses of interfaces that are up.
-func localIPv4s() []string {
-	var out []string
-	ifaces, _ := net.Interfaces()
-	for _, ifc := range ifaces {
-		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, _ := ifc.Addrs()
-		for _, a := range addrs {
-			if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil {
-				out = append(out, n.IP.String())
-			}
-		}
-	}
-	return out
 }
 
 // pinCommand shows the PIN, or with "off" removes it (from the Kobo's menu,

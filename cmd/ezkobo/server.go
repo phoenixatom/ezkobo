@@ -20,17 +20,14 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/phoenixatom/ezkobo/internal/book"
+	"github.com/phoenixatom/ezkobo/internal/kobo"
+	"github.com/phoenixatom/ezkobo/internal/mdns"
 )
 
 //go:embed web/index.html
 var indexHTML []byte
-
-// Formats Kobo's stock reader can open.
-var bookExts = map[string]bool{
-	".epub": true, ".pdf": true, ".mobi": true, ".cbz": true, ".cbr": true,
-	".txt": true, ".html": true, ".htm": true, ".rtf": true,
-	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".bmp": true, ".tif": true, ".tiff": true,
-}
 
 type server struct {
 	cfg      config
@@ -79,14 +76,14 @@ func serve(cfg config) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	svc := &mdnsService{
-		host:     strings.ToLower(cfg.host) + ".local",
-		instance: strings.ReplaceAll(cfg.name, ".", "-"),
-		port:     listenPort(cfg.addr),
-		model:    cfg.model,
+	svc := &mdns.Service{
+		Host:     strings.ToLower(cfg.host) + ".local",
+		Instance: strings.ReplaceAll(cfg.name, ".", "-"),
+		Port:     listenPort(cfg.addr),
+		Model:    cfg.model,
 	}
 	mdnsDone := make(chan struct{})
-	go func() { runMDNS(ctx, svc); close(mdnsDone) }()
+	go func() { mdns.Run(ctx, svc); close(mdnsDone) }()
 	if cfg.idle > 0 {
 		go s.idleWatch(ctx, cancel)
 	}
@@ -98,7 +95,7 @@ func serve(cfg config) error {
 	}()
 
 	log.Printf("ezkobo: started (pid %d) as %q, serving %s on %s, addresses %v",
-		os.Getpid(), cfg.name, cfg.dir, cfg.addr, localIPv4s())
+		os.Getpid(), cfg.name, cfg.dir, cfg.addr, mdns.LocalIPv4s())
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -187,7 +184,8 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	w.Write(indexHTML)
 }
 
-type book struct {
+// bookFile is a book on the Kobo, as listed by the API.
+type bookFile struct {
 	Name  string `json:"name"`
 	Size  int64  `json:"size"`
 	MTime int64  `json:"mtime"` // unix seconds
@@ -204,7 +202,7 @@ func (s *server) listBooks(w http.ResponseWriter, r *http.Request) {
 		httpError(w, err, http.StatusInternalServerError)
 		return
 	}
-	if lib := s.koboLibrary(); lib != nil {
+	if lib := kobo.Library(s.cfg.db, s.libraryRoot()); lib != nil {
 		for i := range books {
 			e, ok := lib[books[i].Name]
 			books[i].InLibrary = &ok
@@ -229,9 +227,9 @@ func (s *server) libraryRoot() string {
 // allBooks returns every book under the library root, named by its path
 // relative to the root ("Books/Dune.epub"). Hidden folders (.kobo, .adds…)
 // and KOReader's .sdr sidecar folders are skipped.
-func (s *server) allBooks() ([]book, error) {
+func (s *server) allBooks() ([]bookFile, error) {
 	root := s.libraryRoot()
-	books := []book{}
+	books := []bookFile{}
 	err := filepath.WalkDir(root, func(p string, e os.DirEntry, err error) error {
 		if err != nil {
 			if p == root && errors.Is(err, os.ErrNotExist) {
@@ -252,12 +250,12 @@ func (s *server) allBooks() ([]book, error) {
 			}
 			return nil
 		}
-		if !isBook(name) {
+		if !book.IsBook(name) {
 			return nil
 		}
 		if fi, err := e.Info(); err == nil {
 			rel, _ := filepath.Rel(root, p)
-			books = append(books, book{Name: filepath.ToSlash(rel), Size: fi.Size(), MTime: fi.ModTime().Unix()})
+			books = append(books, bookFile{Name: filepath.ToSlash(rel), Size: fi.Size(), MTime: fi.ModTime().Unix()})
 		}
 		return nil
 	})
@@ -265,10 +263,10 @@ func (s *server) allBooks() ([]book, error) {
 }
 
 func (s *server) info(w http.ResponseWriter, r *http.Request) {
-	d := readDevice()
+	d := kobo.ReadDevice()
 	free, total := s.space()
 	books, _ := s.allBooks()
-	bat := readBattery()
+	bat := kobo.ReadBattery()
 	if s.cfg.demo {
 		if n := len(s.cfg.name); n >= 4 {
 			d.Serial = s.cfg.name[n-4:]
@@ -277,7 +275,7 @@ func (s *server) info(w http.ResponseWriter, r *http.Request) {
 		for _, c := range s.cfg.name {
 			level += int(c)
 		}
-		bat = &battery{Level: 55 + level%40}
+		bat = &kobo.Battery{Level: 55 + level%40}
 	}
 	writeJSON(w, map[string]any{
 		"name":     s.cfg.name,
@@ -299,13 +297,13 @@ func (s *server) space() (free, total uint64) {
 	}
 	for dir := s.cfg.dir; ; dir = filepath.Dir(dir) {
 		if _, err := os.Stat(dir); err == nil || dir == filepath.Dir(dir) {
-			return diskSpace(dir)
+			return kobo.DiskSpace(dir)
 		}
 	}
 }
 
 func (s *server) putBook(w http.ResponseWriter, r *http.Request) {
-	name, err := cleanName(r.PathValue("name"))
+	name, err := book.CleanName(r.PathValue("name"))
 	if err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
@@ -338,7 +336,7 @@ func (s *server) putBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fix metadata, convert to KEPUB and rename, per this Kobo's settings.
-	res := processBook(r.Context(), s.loadSettings(), tmp.Name(), name)
+	res := book.Process(r.Context(), s.loadSettings(), tmp.Name(), name)
 	dst := filepath.Join(s.cfg.dir, res.Name)
 	if _, err := os.Stat(dst); err == nil {
 		writeJSON(w, map[string]any{"name": res.Name, "skipped": true})
@@ -385,7 +383,7 @@ func cleanRelPath(p string) (string, error) {
 			return "", errors.New("invalid path")
 		}
 	}
-	if !isBook(p) {
+	if !book.IsBook(p) {
 		return "", fmt.Errorf("%s: not a book", p)
 	}
 	return p, nil
@@ -401,56 +399,10 @@ func (s *server) rescan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"method": method, "ok": err == nil})
 }
 
-// cleanName turns a client-supplied file name into a safe FAT32 file name
-// inside the books folder.
-func cleanName(n string) (string, error) {
-	n = path.Base(strings.ReplaceAll(n, `\`, "/"))
-	n = strings.Map(func(r rune) rune {
-		if r < 32 || strings.ContainsRune(`<>:"/\|?*`, r) {
-			return '_'
-		}
-		return r
-	}, n)
-	n = strings.TrimSpace(strings.TrimRight(n, ". "))
-	if n == "" || strings.HasPrefix(n, ".") {
-		return "", errors.New("invalid file name")
-	}
-	if !isBook(n) {
-		return "", fmt.Errorf("%s: not a format Kobo can open", n)
-	}
-	if ext := filepath.Ext(n); len(n) > 200 {
-		n = strings.ToValidUTF8(n[:200-len(ext)], "") + ext
-	}
-	return n, nil
-}
-
 func listenPort(addr string) int {
 	_, p, _ := net.SplitHostPort(addr)
 	n, _ := strconv.Atoi(p)
 	return n
-}
-
-func isBook(name string) bool {
-	return bookExts[strings.ToLower(filepath.Ext(name))]
-}
-
-// uniquePath returns p, or "name (2).ext" etc. if p already exists.
-func uniquePath(p string) string {
-	if _, err := os.Stat(p); err != nil {
-		return p
-	}
-	ext := filepath.Ext(p)
-	stem := strings.TrimSuffix(p, ext)
-	if strings.HasSuffix(strings.ToLower(stem), ".kepub") {
-		ext = stem[len(stem)-6:] + ext
-		stem = stem[:len(stem)-6]
-	}
-	for i := 2; ; i++ {
-		q := fmt.Sprintf("%s (%d)%s", stem, i, ext)
-		if _, err := os.Stat(q); err != nil {
-			return q
-		}
-	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

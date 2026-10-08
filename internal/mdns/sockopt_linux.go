@@ -1,3 +1,3 @@
-package main
+package mdns
 
 const soReusePort = 0xf // SO_REUSEPORT; missing from syscall on linux

@@ -12,7 +12,7 @@ NM_TGZ := .cache/NickelMenu-$(NM_VERSION)-KoboRoot.tgz
 kobo: $(NM_TGZ)
 	rm -rf build dist
 	mkdir -p $(ROOT)/usr/local/ezkobo $(ROOT)/etc/udev/rules.d $(ROOT)/mnt/onboard/.adds/nm dist
-	GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o $(ROOT)/usr/local/ezkobo/ezkobo .
+	GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o $(ROOT)/usr/local/ezkobo/ezkobo ./cmd/ezkobo
 	install -m 755 kobo/boot.sh $(ROOT)/usr/local/ezkobo/boot.sh
 	install -m 644 kobo/99-ezkobo.rules $(ROOT)/etc/udev/rules.d/99-ezkobo.rules
 	install -m 644 nickelmenu/ezkobo $(ROOT)/mnt/onboard/.adds/nm/ezkobo
@@ -32,7 +32,7 @@ $(NM_TGZ):
 # Run the agent locally: web UI at http://localhost:8080, discoverable by the app.
 dev:
 	mkdir -p tmp/books
-	go run . serve -addr :8080 -dir tmp/books -pidfile tmp/ezkobo.pid -rescan off -name "Dev Kobo"
+	go run ./cmd/ezkobo serve -addr :8080 -dir tmp/books -library tmp -state tmp/state -pidfile tmp/ezkobo.pid -rescan off -name "Dev Kobo"
 
 # Back up, copy KoboRoot.tgz onto, and eject every plugged-in Kobo.
 install-kobo: kobo

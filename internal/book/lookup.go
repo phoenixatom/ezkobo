@@ -1,270 +1,25 @@
-package main
+package book
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
-	"os"
-	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
 
-	"github.com/beevik/etree"
-	"github.com/pgaskin/kepubify/v4/kepub"
 	_ "golang.org/x/crypto/x509roots/fallback" // CA roots if the Kobo has none
 )
-
-// processed describes what happened to an uploaded book.
-type processed struct {
-	Name      string `json:"name"`      // final file name
-	Converted bool   `json:"converted"` // EPUB → KEPUB
-	Metadata  string `json:"metadata"`  // "", "cleaned", "google", "openlibrary"
-}
-
-// processBook applies the Kobo's settings to an uploaded file at tmp, which
-// was sent as name. It may rewrite tmp in place and returns the final name.
-func processBook(ctx context.Context, st settings, tmp, name string) processed {
-	res := processed{Name: name}
-	lower := strings.ToLower(name)
-	if !strings.HasSuffix(lower, ".epub") {
-		return res // only EPUBs carry metadata we can fix or convert
-	}
-	isKepub := strings.HasSuffix(lower, ".kepub.epub")
-
-	meta, err := readEPUBMeta(tmp)
-	if err != nil {
-		log.Printf("ezkobo: %s: reading metadata: %v", name, err)
-		return res
-	}
-
-	if st.Metadata || st.CleanNames {
-		if fixed, source := fixMetadata(ctx, meta, name, st); fixed != nil {
-			if err := writeEPUBMeta(tmp, fixed); err != nil {
-				log.Printf("ezkobo: %s: writing metadata: %v", name, err)
-			} else {
-				meta, res.Metadata = fixed, source
-			}
-		}
-	}
-
-	if st.Kepub && !isKepub {
-		if err := convertKepub(ctx, tmp); err != nil {
-			log.Printf("ezkobo: %s: KEPUB conversion failed, keeping EPUB: %v", name, err)
-		} else {
-			res.Converted, isKepub = true, true
-		}
-	}
-
-	ext := ".epub"
-	if isKepub {
-		ext = ".kepub.epub"
-	}
-	base := strings.TrimSuffix(strings.TrimSuffix(name, filepath.Ext(name)), ".kepub")
-	if st.CleanNames && meta.Title != "" {
-		base = meta.Title
-		if meta.Author != "" {
-			base = meta.Author + " - " + meta.Title
-		}
-	}
-	if n, err := cleanName(base + ext); err == nil {
-		res.Name = n
-	}
-	return res
-}
-
-// --- EPUB metadata -----------------------------------------------------------
-
-type epubMeta struct {
-	Title    string
-	Author   string
-	HasCover bool
-	Cover    []byte // a new cover to add, if any
-}
-
-// readEPUBMeta reads title, author and whether a cover exists from the OPF.
-func readEPUBMeta(file string) (*epubMeta, error) {
-	zr, err := zip.OpenReader(file)
-	if err != nil {
-		return nil, err
-	}
-	defer zr.Close()
-	opfPath, doc, err := readOPF(&zr.Reader)
-	if err != nil {
-		return nil, err
-	}
-	_ = opfPath
-	m := &epubMeta{}
-	if md := doc.FindElement("//metadata"); md != nil {
-		if e := md.FindElement("title"); e != nil {
-			m.Title = strings.TrimSpace(e.Text())
-		}
-		if e := md.FindElement("creator"); e != nil {
-			m.Author = strings.TrimSpace(e.Text())
-		}
-		for _, e := range md.SelectElements("meta") {
-			if e.SelectAttrValue("name", "") == "cover" {
-				m.HasCover = true
-			}
-		}
-	}
-	for _, e := range doc.FindElements("//manifest/item") {
-		if strings.Contains(e.SelectAttrValue("properties", ""), "cover-image") {
-			m.HasCover = true
-		}
-	}
-	return m, nil
-}
-
-func readOPF(zr *zip.Reader) (string, *etree.Document, error) {
-	container, err := readZipFile(zr, "META-INF/container.xml")
-	if err != nil {
-		return "", nil, err
-	}
-	cdoc := etree.NewDocument()
-	if err := cdoc.ReadFromBytes(container); err != nil {
-		return "", nil, err
-	}
-	rf := cdoc.FindElement("//rootfile")
-	if rf == nil {
-		return "", nil, errors.New("no rootfile in container.xml")
-	}
-	opfPath := rf.SelectAttrValue("full-path", "")
-	opf, err := readZipFile(zr, opfPath)
-	if err != nil {
-		return "", nil, err
-	}
-	doc := etree.NewDocument()
-	if err := doc.ReadFromBytes(opf); err != nil {
-		return "", nil, err
-	}
-	return opfPath, doc, nil
-}
-
-func readZipFile(zr *zip.Reader, name string) ([]byte, error) {
-	f, err := zr.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return io.ReadAll(io.LimitReader(f, 8<<20))
-}
-
-// writeEPUBMeta rewrites the EPUB at file with m's title, author and cover.
-func writeEPUBMeta(file string, m *epubMeta) error {
-	zr, err := zip.OpenReader(file)
-	if err != nil {
-		return err
-	}
-	defer zr.Close()
-	opfPath, doc, err := readOPF(&zr.Reader)
-	if err != nil {
-		return err
-	}
-	md := doc.FindElement("//metadata")
-	if md == nil {
-		return errors.New("no metadata in OPF")
-	}
-	setDC(md, "title", m.Title)
-	setDC(md, "creator", m.Author)
-
-	coverPath := ""
-	if m.Cover != nil && !m.HasCover {
-		if manifest := doc.FindElement("//manifest"); manifest != nil {
-			item := manifest.CreateElement("item")
-			item.CreateAttr("id", "ezkobo-cover")
-			item.CreateAttr("href", "ezkobo-cover.jpg")
-			item.CreateAttr("media-type", "image/jpeg")
-			item.CreateAttr("properties", "cover-image") // EPUB 3
-			meta := md.CreateElement("meta")             // EPUB 2
-			meta.CreateAttr("name", "cover")
-			meta.CreateAttr("content", "ezkobo-cover")
-			coverPath = path.Join(path.Dir(opfPath), "ezkobo-cover.jpg")
-		}
-	}
-	doc.Indent(2)
-	opf, err := doc.WriteToBytes()
-	if err != nil {
-		return err
-	}
-
-	out, err := os.CreateTemp(filepath.Dir(file), ".ezkobo-*.part")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(out.Name())
-	zw := zip.NewWriter(out)
-	for _, f := range zr.File {
-		if f.Name == opfPath {
-			w, err := zw.CreateHeader(&zip.FileHeader{Name: f.Name, Method: zip.Deflate, Modified: f.Modified})
-			if err != nil {
-				return err
-			}
-			w.Write(opf)
-			continue
-		}
-		if err := zw.Copy(f); err != nil { // keeps "mimetype" first and stored
-			return err
-		}
-	}
-	if coverPath != "" {
-		w, err := zw.Create(coverPath)
-		if err != nil {
-			return err
-		}
-		w.Write(m.Cover)
-	}
-	if err := zw.Close(); err != nil {
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	zr.Close()
-	return os.Rename(out.Name(), file)
-}
-
-// setDC sets the text of the first dc:<name> element, creating it if needed.
-func setDC(md *etree.Element, name, value string) {
-	if value == "" {
-		return
-	}
-	e := md.FindElement(name)
-	if e == nil {
-		e = md.CreateElement("dc:" + name)
-	}
-	e.SetText(value)
-}
-
-// --- Cleaning and lookup ------------------------------------------------------
-
-// junk matches a bracketed website tag that download sites append to titles
-// and file names, e.g. "(example.org, mirror.net)" or "[site.com]".
-var junk = regexp.MustCompile(`(?i)\s*[(\[][^()\[\]]*\b[a-z0-9-]+\.[a-z]{2,6}\b[^()\[\]]*[)\]]`)
-
-func isMessy(s string) bool {
-	return s == "" || strings.EqualFold(s, "unknown") || junk.MatchString(s) || strings.Contains(s, "_")
-}
-
-func cleanText(s string) string {
-	s = junk.ReplaceAllString(s, "")
-	s = strings.ReplaceAll(s, "_", " ")
-	return strings.Join(strings.Fields(s), " ")
-}
 
 // fixMetadata returns improved metadata, or nil if nothing changed. With
 // online set, it looks the book up (Google Books, then Open Library) when
 // the title or author is missing or messy, or the book has no cover.
-func fixMetadata(ctx context.Context, m *epubMeta, fileName string, st settings) (*epubMeta, string) {
+func fixMetadata(ctx context.Context, m *epubMeta, fileName string, st Options) (*epubMeta, string) {
 	online := st.Metadata
 	fixed := *m
 	source := ""
@@ -317,45 +72,6 @@ func fixMetadata(ctx context.Context, m *epubMeta, fileName string, st settings)
 	return &fixed, source
 }
 
-// splitTitleAuthor splits "Title (Author)" into its parts, handling nested
-// brackets like "Butter (Asako Yuzuki, Polly Barton (translator))". Only the
-// first author is kept.
-func splitTitleAuthor(s string) (title, author string) {
-	if !strings.HasSuffix(s, ")") {
-		return s, ""
-	}
-	depth := 0
-	for i := len(s) - 1; i > 0; i-- {
-		switch s[i] {
-		case ')':
-			depth++
-		case '(':
-			depth--
-		}
-		if depth == 0 {
-			title = strings.TrimSpace(s[:i])
-			author = s[i+1 : len(s)-1]
-			break
-		}
-	}
-	if title == "" {
-		return s, ""
-	}
-	author, _, _ = strings.Cut(author, ",")
-	author, _, _ = strings.Cut(author, " (")
-	author = strings.TrimSuffix(strings.TrimSpace(author), " etc.")
-	return title, strings.TrimSpace(author)
-}
-
-func firstNonEmpty(ss ...string) string {
-	for _, s := range ss {
-		if s != "" {
-			return s
-		}
-	}
-	return ""
-}
-
 type bookInfo struct {
 	Title, Author, CoverURL string
 }
@@ -366,7 +82,7 @@ const userAgent = "EzKobo (+https://github.com/phoenixatom/ezkobo)"
 
 // lookupBook asks each enabled provider in the user's order and returns the
 // first good match.
-func lookupBook(ctx context.Context, title, author string, st settings) (*bookInfo, string) {
+func lookupBook(ctx context.Context, title, author string, st Options) (*bookInfo, string) {
 	for _, p := range st.Providers {
 		if !p.Enabled || ctx.Err() != nil {
 			continue
@@ -593,28 +309,4 @@ func fetchCover(ctx context.Context, u string) []byte {
 		return nil
 	}
 	return b
-}
-
-// --- KEPUB -------------------------------------------------------------------
-
-func convertKepub(ctx context.Context, file string) error {
-	zr, err := zip.OpenReader(file)
-	if err != nil {
-		return err
-	}
-	defer zr.Close()
-	out, err := os.CreateTemp(filepath.Dir(file), ".ezkobo-*.part")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(out.Name())
-	if err := kepub.NewConverter().Convert(ctx, out, &zr.Reader); err != nil {
-		out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	zr.Close()
-	return os.Rename(out.Name(), file)
 }

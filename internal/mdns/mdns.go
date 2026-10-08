@@ -1,4 +1,7 @@
-package main
+// Package mdns is a minimal mDNS / DNS-SD responder. It advertises the
+// _ezkobo._tcp service so phones can find the Kobo without an address, and
+// answers A queries for <host>.local for browsers.
+package mdns
 
 import (
 	"context"
@@ -12,10 +15,6 @@ import (
 	"syscall"
 	"time"
 )
-
-// A minimal mDNS / DNS-SD responder. It advertises the _ezkobo._tcp service
-// so the phone app can find the Kobo on the local network without typing an
-// address, and answers A queries for <host>.local for browsers.
 
 const (
 	svcType = "_ezkobo._tcp.local"
@@ -32,16 +31,19 @@ const (
 
 var mdnsGroup = &net.UDPAddr{IP: net.IPv4(224, 0, 0, 251), Port: 5353}
 
-type mdnsService struct {
-	host     string // e.g. "ezkobo.local"
-	instance string // e.g. "Kobo 1A2B"
-	port     int
-	model    string
+// Service is what gets advertised.
+type Service struct {
+	Host     string // e.g. "kobo-1a2b.local"
+	Instance string // e.g. "Libra Colour 1A2B"
+	Port     int
+	Model    string // shown by the app before it connects
 }
 
-func (s *mdnsService) instFQDN() string { return s.instance + "." + svcType }
+func (s *Service) instFQDN() string { return s.Instance + "." + svcType }
 
-func runMDNS(ctx context.Context, svc *mdnsService) {
+// Run answers queries and announces svc until ctx is done, rejoining the
+// network whenever the Kobo's address changes (Wi-Fi reconnects).
+func Run(ctx context.Context, svc *Service) {
 	for ctx.Err() == nil {
 		// A session ends when our IP changes (WiFi reconnect) so we rejoin
 		// the multicast group and re-announce on the new network.
@@ -55,8 +57,8 @@ func runMDNS(ctx context.Context, svc *mdnsService) {
 	}
 }
 
-func mdnsSession(ctx context.Context, svc *mdnsService) error {
-	ips := localIPv4s()
+func mdnsSession(ctx context.Context, svc *Service) error {
+	ips := LocalIPv4s()
 	if len(ips) == 0 {
 		return nil // no network yet
 	}
@@ -73,7 +75,7 @@ func mdnsSession(ctx context.Context, svc *mdnsService) error {
 	}
 	announce(120)
 	time.AfterFunc(time.Second, func() { announce(120) })
-	log.Printf("ezkobo: advertising %q on %s", svc.instance, ip)
+	log.Printf("ezkobo: advertising %q on %s", svc.Instance, ip)
 
 	buf := make([]byte, 9000)
 	end := time.Now().Add(15 * time.Minute)
@@ -82,7 +84,7 @@ func mdnsSession(ctx context.Context, svc *mdnsService) error {
 			announce(0) // goodbye: tell phones we're gone
 			return nil
 		}
-		if !slices.Equal(ips, localIPv4s()) {
+		if !slices.Equal(ips, LocalIPv4s()) {
 			return nil
 		}
 		conn.SetReadDeadline(time.Now().Add(3 * time.Second))
@@ -131,29 +133,29 @@ type record struct {
 	data  []byte
 }
 
-func (s *mdnsService) records(ip net.IP, ttl uint32, mcast bool) (ptr, srv, txt, a, enum record) {
+func (s *Service) records(ip net.IP, ttl uint32, mcast bool) (ptr, srv, txt, a, enum record) {
 	ptr = record{svcType, tPTR, false, ttl, encodeName(s.instFQDN())}
 	srvData := binary.BigEndian.AppendUint16(nil, 0) // priority
 	srvData = binary.BigEndian.AppendUint16(srvData, 0)
-	srvData = binary.BigEndian.AppendUint16(srvData, uint16(s.port))
-	srv = record{s.instFQDN(), tSRV, mcast, ttl, append(srvData, encodeName(s.host)...)}
+	srvData = binary.BigEndian.AppendUint16(srvData, uint16(s.Port))
+	srv = record{s.instFQDN(), tSRV, mcast, ttl, append(srvData, encodeName(s.Host)...)}
 	var txtData []byte
-	for _, kv := range []string{"v=1", "ip=" + ip.String(), fmt.Sprintf("port=%d", s.port), "model=" + s.model} {
+	for _, kv := range []string{"v=1", "ip=" + ip.String(), fmt.Sprintf("port=%d", s.Port), "model=" + s.Model} {
 		txtData = append(append(txtData, byte(len(kv))), kv...)
 	}
 	txt = record{s.instFQDN(), tTXT, mcast, ttl, txtData}
-	a = record{s.host, tA, mcast, ttl, ip.To4()}
+	a = record{s.Host, tA, mcast, ttl, ip.To4()}
 	enum = record{svcEnum, tPTR, false, ttl, encodeName(svcType)}
 	return
 }
 
-func (s *mdnsService) allRecords(ip net.IP, ttl uint32, mcast bool) []record {
+func (s *Service) allRecords(ip net.IP, ttl uint32, mcast bool) []record {
 	ptr, srv, txt, a, _ := s.records(ip, ttl, mcast)
 	return []record{ptr, srv, txt, a}
 }
 
 // answer returns the answer and additional records for the questions we own.
-func (s *mdnsService) answer(qs []question, ip net.IP, mcast bool) (ans, extra []record) {
+func (s *Service) answer(qs []question, ip net.IP, mcast bool) (ans, extra []record) {
 	ttl := uint32(120)
 	if !mcast {
 		ttl = 10 // RFC 6762 §6.7: legacy unicast replies use short TTLs
@@ -173,12 +175,12 @@ func (s *mdnsService) answer(qs []question, ip net.IP, mcast bool) (ans, extra [
 			if want(q, tTXT) {
 				ans = append(ans, txt)
 			}
-		case strings.EqualFold(q.name, s.host) && want(q, tA):
+		case strings.EqualFold(q.name, s.Host) && want(q, tA):
 			ans = append(ans, a)
-		case strings.EqualFold(q.name, s.host) && q.typ == tAAAA:
+		case strings.EqualFold(q.name, s.Host) && q.typ == tAAAA:
 			// We have no IPv6 address. Say so (RFC 6762 §6.1), or browsers
 			// wait ~5 s for an AAAA answer before using the A record.
-			ans = append(ans, record{s.host, tNSEC, mcast, ttl, nsecOnlyA(s.host)})
+			ans = append(ans, record{s.Host, tNSEC, mcast, ttl, nsecOnlyA(s.Host)})
 			extra = append(extra, a)
 		case strings.EqualFold(q.name, svcEnum) && want(q, tPTR):
 			ans = append(ans, enum)
@@ -356,4 +358,22 @@ func localIPFor(peer net.IP) net.IP {
 		}
 	}
 	return fallback
+}
+
+// LocalIPv4s returns the non-loopback IPv4 addresses of interfaces that are up.
+func LocalIPv4s() []string {
+	var out []string
+	ifaces, _ := net.Interfaces()
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := ifc.Addrs()
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil {
+				out = append(out, n.IP.String())
+			}
+		}
+	}
+	return out
 }
