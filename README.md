@@ -8,11 +8,11 @@
 Pick a book on your iPhone, tap your Kobo, done. No cable, no cloud, no account.</p>
 
 <p align="center">
-  <img src="docs/app-light.png" width="250" alt="EzKobo app listing two Kobos with battery, free space and books">
+  <img src="docs/home-light.png" width="250" alt="EzKobo home: reading stats, Continue Reading with the mascot, and Also Reading">
   &nbsp;
-  <img src="docs/app-dark.png" width="250" alt="EzKobo app in dark mode">
+  <img src="docs/home-dark.png" width="250" alt="EzKobo app in dark mode">
   &nbsp;
-  <img src="docs/web.png" width="250" alt="The same view as a web page, served by the Kobo itself">
+  <img src="docs/web-home.png" width="250" alt="The same view as a web page, served by the Kobo itself">
 </p>
 
 ## Why EzKobo
