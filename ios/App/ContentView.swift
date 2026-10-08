@@ -135,6 +135,17 @@ struct ContentView: View {
 
     @ViewBuilder private func readingCards(_ kobo: Kobo) -> some View {
         if let summary {
+            NavigationLink {
+                StatsView(client: client, summary: summary, model: model(kobo))
+            } label: {
+                StatsStrip(stats: summary.stats)
+                    .foregroundStyle(.primary)
+                    .card()
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Reading Stats")
+            .padding(.bottom, 12)
+
             if let current = summary.reading.first {
                 HomeSectionTitle("Continue Reading")
                 NavigationLink {
@@ -155,17 +166,6 @@ struct ContentView: View {
                     .card()
             }
 
-            HomeSectionTitle("Your Reading")
-                .padding(.top, 12)
-            NavigationLink {
-                StatsView(client: client, summary: summary, model: model(kobo))
-            } label: {
-                StatsStrip(stats: summary.stats)
-                    .foregroundStyle(.primary)
-                    .card()
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Reading Stats")
         }
     }
 
