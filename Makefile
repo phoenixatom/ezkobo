@@ -7,21 +7,38 @@ NM_VERSION := v0.6.0
 NM_SHA256 := 322ff9aa863860e8f5f7e0b55cae561c54bf95983b9bce1d19819d1225d064af
 NM_TGZ := .cache/NickelMenu-$(NM_VERSION)-KoboRoot.tgz
 
+# NickelDBus (https://github.com/shermp/NickelDBus) lets EzKobo import books
+# into the library as soon as they arrive. Tested on Clara and Libra Colour.
+NDB_VERSION := 0.2.0
+NDB_SHA256 := 9fdb3d16d0f43c1ea6f2f1264b10fcde1d72a674e55f12955de812d476eb5dc5
+NDB_TGZ := .cache/NickelDBus-$(NDB_VERSION)-KoboRoot.tgz
+
 # dist/KoboRoot.tgz: copy into the Kobo's .kobo folder and eject; the Kobo
 # installs it on reboot. The same file works on every Kobo.
-kobo: $(NM_TGZ)
+# dist/KoboRoot.tgz                 EzKobo + NickelDBus (Kobos with NickelMenu)
+# dist/KoboRoot-with-NickelMenu.tgz EzKobo + NickelDBus + NickelMenu
+# build/KoboRoot-ezkobo-only.tgz    EzKobo alone (firmware 5.x, unsupported by the mods)
+kobo: $(NM_TGZ) $(NDB_TGZ)
 	rm -rf build dist
 	mkdir -p $(ROOT)/usr/local/ezkobo $(ROOT)/etc/udev/rules.d $(ROOT)/mnt/onboard/.adds/nm dist
 	GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o $(ROOT)/usr/local/ezkobo/ezkobo ./cmd/ezkobo
 	install -m 755 kobo/boot.sh $(ROOT)/usr/local/ezkobo/boot.sh
 	install -m 644 kobo/99-ezkobo.rules $(ROOT)/etc/udev/rules.d/99-ezkobo.rules
 	install -m 644 nickelmenu/ezkobo $(ROOT)/mnt/onboard/.adds/nm/ezkobo
-	scripts/pack-koboroot.sh $(ROOT) dist/KoboRoot.tgz
-	# Same files plus NickelMenu, for Kobos that don't have it yet.
-	cp -R $(ROOT) build/root-nm
+	scripts/pack-koboroot.sh $(ROOT) build/KoboRoot-ezkobo-only.tgz
+	cp -R $(ROOT) build/root-ndb
+	tar -xzf $(NDB_TGZ) -C build/root-ndb
+	scripts/pack-koboroot.sh build/root-ndb dist/KoboRoot.tgz
+	cp -R build/root-ndb build/root-nm
 	tar -xzf $(NM_TGZ) -C build/root-nm
 	scripts/pack-koboroot.sh build/root-nm dist/KoboRoot-with-NickelMenu.tgz
 	@echo "Built dist/KoboRoot.tgz and dist/KoboRoot-with-NickelMenu.tgz"
+
+$(NDB_TGZ):
+	mkdir -p .cache
+	curl -fsSL -o $@.part https://github.com/shermp/NickelDBus/releases/download/$(NDB_VERSION)/KoboRoot.tgz
+	echo "$(NDB_SHA256)  $@.part" | shasum -a 256 -c -
+	mv $@.part $@
 
 $(NM_TGZ):
 	mkdir -p .cache

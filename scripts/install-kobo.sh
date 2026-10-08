@@ -1,9 +1,9 @@
 #!/bin/sh
 # Install EzKobo on every Kobo plugged into this Mac: back it up, copy
 # KoboRoot.tgz into its .kobo folder, and eject it. The Kobo installs
-# EzKobo when it restarts. Kobos without NickelMenu get it too (it provides
-# the "Import new books" menu item), except on firmware 5.x, which
-# NickelMenu doesn't support yet.
+# EzKobo when it restarts. NickelDBus comes along so new books are imported
+# automatically, and Kobos without NickelMenu get it too (EzKobo's menu
+# items). Neither supports firmware 5.x yet; there EzKobo is installed alone.
 #
 # Usage: scripts/install-kobo.sh [--no-backup] [--no-eject] [kobo-drive ...]
 
@@ -12,6 +12,7 @@ set -eu
 cd "$(dirname "$0")/.."
 PKG=dist/KoboRoot.tgz
 PKG_NM=dist/KoboRoot-with-NickelMenu.tgz
+PKG_ALONE=build/KoboRoot-ezkobo-only.tgz
 backup=1
 eject=1
 
@@ -25,7 +26,7 @@ while [ $# -gt 0 ]; do
 	shift
 done
 
-if [ ! -f "$PKG" ] || [ ! -f "$PKG_NM" ]; then
+if [ ! -f "$PKG" ] || [ ! -f "$PKG_NM" ] || [ ! -f "$PKG_ALONE" ]; then
 	echo "Building packages…"
 	make kobo >/dev/null
 fi
@@ -43,7 +44,7 @@ install_on() {
 	# overwrite it.
 	pending="$drive/.kobo/KoboRoot.tgz"
 	if [ -f "$pending" ]; then
-		if cmp -s "$pending" "$PKG" || cmp -s "$pending" "$PKG_NM"; then
+		if cmp -s "$pending" "$PKG" || cmp -s "$pending" "$PKG_NM" || cmp -s "$pending" "$PKG_ALONE"; then
 			echo "  EzKobo is already copied and waiting to install. Eject and restart the Kobo."
 			return 0
 		fi
@@ -55,13 +56,14 @@ install_on() {
 	# NickelMenu installs .adds/nm/doc; EzKobo's own .adds/nm/ezkobo doesn't count.
 	firmware=$(head -n 1 "$drive/.kobo/version" | cut -d, -f3)
 	pkg=$PKG
-	if [ -f "$drive/.adds/nm/doc" ]; then
-		echo "  NickelMenu found: EzKobo adds two menu items (EzKobo status, Import new books)."
-	elif [ "${firmware%%.*}" -ge 5 ] 2>/dev/null; then
-		echo "  NickelMenu not installed, and it doesn't support firmware $firmware yet." >&2
-		echo "  Installing EzKobo alone: books will arrive, but there's no Import new books button." >&2
+	if [ "${firmware%%.*}" -ge 5 ] 2>/dev/null; then
+		echo "  Firmware $firmware: NickelMenu and NickelDBus don't support 5.x yet." >&2
+		echo "  Installing EzKobo alone: books arrive, but importing them needs a USB connection." >&2
+		pkg=$PKG_ALONE
+	elif [ -f "$drive/.adds/nm/doc" ]; then
+		echo "  NickelMenu found. Adding NickelDBus so new books are imported automatically."
 	else
-		echo "  NickelMenu not installed: installing it too (for the Import new books button)."
+		echo "  Installing NickelMenu and NickelDBus too, so new books are imported automatically."
 		pkg=$PKG_NM
 	fi
 	if [ -e "$drive/ezkobo-uninstall" ]; then

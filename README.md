@@ -55,7 +55,7 @@ Share an EPUB, PDF or comic from Files, Safari, Mail or any other app, choose
 ```mermaid
 flowchart LR
     phone[iPhone] -- finds and sends --> kobo[Kobo]
-    kobo -- Import new books --> library[Library]
+    kobo -- imports --> library[Library]
 ```
 
 1. **Discovery.** A small agent on the Kobo announces itself on your Wi‑Fi
@@ -64,8 +64,8 @@ flowchart LR
 2. **Transfer.** The app sends the book straight to the Kobo over HTTP. The
    Kobo converts it to KEPUB with [kepubify](https://github.com/pgaskin/kepubify),
    fixes its details if needed, and saves it in the `Books` folder.
-3. **Import.** Tap **Import new books** in the Kobo menu, and it appears in
-   your library.
+3. **Import.** [NickelDBus](https://github.com/shermp/NickelDBus), installed
+   alongside, tells the Kobo to add the book to your library right away.
 
 The agent is one static Go binary with no other dependencies on the Kobo. It
 starts at boot and when Wi‑Fi turns on, does nothing until your phone talks to
@@ -90,7 +90,7 @@ it, and is frozen while the Kobo sleeps.
 1. From the [latest release](https://github.com/phoenixatom/ezkobo/releases/latest),
    download **`KoboRoot-with-NickelMenu.tgz`** if your Kobo doesn't have
    [NickelMenu](https://pgaskin.net/NickelMenu/) yet, otherwise
-   **`KoboRoot.tgz`**.
+   **`KoboRoot.tgz`**. Both include NickelDBus.
 2. Connect the Kobo to your computer and copy your whole Kobo drive somewhere
    as a backup (include the hidden `.kobo` folder).
 3. Rename the download to `KoboRoot.tgz` if needed, copy it into the hidden
@@ -109,13 +109,15 @@ make install-kobo
 ```
 
 This backs the Kobo up to `~/Kobo Backups/`, copies the right package into its
-`.kobo` folder (adding NickelMenu if it's missing), and ejects it. Unplug it:
-the Kobo installs EzKobo and restarts. With several Kobos plugged in, it
-installs on each.
+`.kobo` folder, and ejects it. Unplug it: the Kobo installs EzKobo and
+restarts. With several Kobos plugged in, it installs on each.
 
-NickelMenu provides the **Import new books** menu item that gets sent books
-into the library. It doesn't support firmware 5.x yet; there, install EzKobo
-alone: books still arrive, but importing them needs a USB connection.
+The package includes [NickelDBus](https://github.com/shermp/NickelDBus)
+0.2.0, so new books are imported automatically (tested on a Clara Colour and a
+Libra Colour), and [NickelMenu](https://pgaskin.net/NickelMenu/) if the Kobo
+doesn't have it, for EzKobo's menu items. Neither supports firmware 5.x yet;
+there EzKobo is installed alone, and books still arrive but need a USB
+connection to be imported.
 
 **Remove:** `make uninstall-kobo` (or create a folder named `ezkobo-uninstall`
 at the top of the Kobo drive), eject, and restart the Kobo.
@@ -138,7 +140,8 @@ Network** access.
 1. Turn on Wi‑Fi on the Kobo.
 2. In EzKobo, pick a Kobo, tap **Send to …**, and choose books — or share a
    file to **EzKobo** from any app.
-3. On the Kobo, open the menu and tap **Import new books**.
+3. The book appears in the Kobo's library by itself. If it doesn't (for
+   example without NickelDBus), open the Kobo menu and tap **Import new books**.
 
 Formats: EPUB, KEPUB, PDF, MOBI, CBZ, CBR, TXT, HTML, RTF and images.
 
@@ -155,10 +158,6 @@ on the Kobo, so they also apply to the Share sheet and the browser page.
 | Rename as Author – Title | On | Names files "Author - Title.kepub.epub" |
 | PIN | Off | Requires a 4–8 digit PIN to see, send or delete books |
 
-With [NickelDBus](https://github.com/shermp/NickelDBus) 0.2.0 installed,
-step 3 happens by itself: the book appears in the library as soon as it
-arrives. Confirmed on a Clara Colour (firmware 4.45).
-
 ## Compatibility with other mods
 
 EzKobo adds four files and changes nothing else:
@@ -169,6 +168,10 @@ EzKobo adds four files and changes nothing else:
 | `/usr/local/ezkobo/boot.sh` | Starts it; handles uninstall |
 | `/etc/udev/rules.d/99-ezkobo.rules` | Runs `boot.sh` at boot and when Wi‑Fi turns on |
 | `.adds/nm/ezkobo` | NickelMenu items: *EzKobo status*, *Import new books* |
+
+The install also adds NickelDBus (`/usr/bin/qndb`, its library in
+`/usr/local/Kobo/imageformats`, and `.adds/nickeldbus`; delete that file and
+restart to remove it), plus NickelMenu if it's missing.
 
 It has been used alongside NickelMenu, NickelHook mods (NickelClock,
 NickelHome, …) and KOReader. `make install-kobo` refuses to overwrite
