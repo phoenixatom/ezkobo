@@ -71,11 +71,10 @@ struct ContinueReadingCard: View {
             Image("Mascot")
                 .resizable()
                 .scaledToFit()
-                .frame(height: 104)
-                .offset(x: -22, y: -66)
+                .frame(height: 94)
+                .offset(x: -22, y: -56)
                 .accessibilityHidden(true)
         }
-        .padding(.top, 66)
     }
 }
 
