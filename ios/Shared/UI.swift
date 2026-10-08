@@ -53,6 +53,12 @@ struct KoboRow: View {
                             .font(.footnote.monospaced())
                             .foregroundStyle(.secondary)
                     }
+                    if info?.locked == true {
+                        Image(systemName: "lock.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("PIN protected")
+                    }
                 }
                 details
                     .font(.subheadline)
@@ -126,6 +132,11 @@ struct TransferRow: View {
             if item.state == .sending || item.state == .waiting {
                 ProgressView(value: item.progress)
             }
+            if let note = item.note {
+                Text(note)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
             if case let .failed(message) = item.state {
                 Text(message)
                     .font(.footnote)
@@ -143,6 +154,11 @@ struct TransferRow: View {
             Text(item.progress, format: .percent.precision(.fractionLength(0)))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
+        case .processing:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Processing").foregroundStyle(.secondary)
+            }
         case .sent:
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case .skipped:

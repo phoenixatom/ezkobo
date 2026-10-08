@@ -25,6 +25,23 @@ struct KoboInfo: Decodable, Hashable {
     let free: Int64
     let total: Int64
     let books: Int
+    /// Whether this Kobo requires a PIN (nil from older agents).
+    let locked: Bool?
+}
+
+/// Per-Kobo settings, stored on the Kobo itself.
+struct KoboSettings: Codable, Hashable {
+    var kepub: Bool
+    var metadata: Bool
+    var cleanNames: Bool
+}
+
+/// What the Kobo did with an uploaded book.
+struct UploadResult: Decodable {
+    let name: String
+    let skipped: Bool?
+    let converted: Bool?
+    let metadata: String?
 }
 
 struct Book: Decodable, Identifiable, Hashable {
@@ -32,8 +49,16 @@ struct Book: Decodable, Identifiable, Hashable {
     let name: String
     let size: Int64
     let mtime: TimeInterval
+    /// From the Kobo's library database, when available.
+    let title: String?
+    let author: String?
+    /// False when the file is on the Kobo but not in its library yet; nil if unknown.
+    let inLibrary: Bool?
+    let progress: Int?
+
     var id: String { name }
     var date: Date { Date(timeIntervalSince1970: mtime) }
+    var displayTitle: String { title.flatMap { $0.isEmpty ? nil : $0 } ?? BookName.title(name) }
 }
 
 /// How a book's file name is shown: "Dune.kepub.epub" → "Dune", "KEPUB".
@@ -55,12 +80,16 @@ enum BookName {
 
 struct KoboError: LocalizedError {
     let message: String
+    /// The Kobo has a PIN and the one sent was missing or wrong.
+    var needsPIN = false
     var errorDescription: String? { message }
 }
 
 /// Talks to the agent's HTTP API.
 struct KoboClient {
     let base: URL
+    /// Sent with every request when the Kobo has a PIN.
+    var pin: String?
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -78,39 +107,70 @@ struct KoboClient {
         return response.books
     }
 
-    /// Uploads a file. Returns true if the Kobo already had an identical copy.
-    func upload(_ file: URL, as name: String, progress: @escaping @Sendable (Double) -> Void) async throws -> Bool {
-        struct Response: Decodable { let skipped: Bool? }
-        var request = URLRequest(url: bookURL(name))
-        request.httpMethod = "PUT"
+    /// Uploads a file. The Kobo may convert and rename it, per its settings.
+    func upload(_ file: URL, as name: String, progress: @escaping @Sendable (Double) -> Void) async throws -> UploadResult {
+        var request = request(bookURL(name), method: "PUT")
+        // Converting and looking up metadata happens before the Kobo answers.
+        request.timeoutInterval = 120
         let (data, response) = try await Self.session.upload(
             for: request, fromFile: file, delegate: UploadProgress(onProgress: progress))
         try check(data, response)
-        return try JSONDecoder().decode(Response.self, from: data).skipped ?? false
+        return try JSONDecoder().decode(UploadResult.self, from: data)
     }
 
     func delete(_ name: String) async throws {
-        var request = URLRequest(url: bookURL(name))
-        request.httpMethod = "DELETE"
-        let (data, response) = try await Self.session.data(for: request)
+        let (data, response) = try await Self.session.data(for: request(bookURL(name), method: "DELETE"))
         try check(data, response)
     }
 
     /// Asks the Kobo to import new books. Returns false if it couldn't.
     func rescan() async -> Bool {
         struct Response: Decodable { let ok: Bool }
-        var request = URLRequest(url: base.appending(path: "api/rescan"))
-        request.httpMethod = "POST"
-        guard let (data, _) = try? await Self.session.data(for: request),
+        guard let (data, _) = try? await Self.session.data(for: request(base.appending(path: "api/rescan"), method: "POST")),
               let response = try? JSONDecoder().decode(Response.self, from: data)
         else { return false }
         return response.ok
     }
 
+    func settings() async throws -> KoboSettings {
+        struct Response: Decodable { let settings: KoboSettings }
+        let response: Response = try await get("api/settings")
+        return response.settings
+    }
+
+    func save(_ settings: KoboSettings) async throws {
+        try await send("api/settings", method: "PUT", body: settings)
+    }
+
+    /// Sets or changes the PIN. Requests must already carry the current PIN, if any.
+    func setPIN(_ newPIN: String) async throws {
+        try await send("api/pin", method: "PUT", body: ["pin": newPIN])
+    }
+
+    func removePIN() async throws {
+        let (data, response) = try await Self.session.data(for: request(base.appending(path: "api/pin"), method: "DELETE"))
+        try check(data, response)
+    }
+
     private func get<T: Decodable>(_ path: String) async throws -> T {
-        let (data, response) = try await Self.session.data(from: base.appending(path: path))
+        let (data, response) = try await Self.session.data(for: request(base.appending(path: path), method: "GET"))
         try check(data, response)
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func send(_ path: String, method: String, body: some Encodable) async throws {
+        var request = request(base.appending(path: path), method: method)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        let (data, response) = try await Self.session.data(for: request)
+        try check(data, response)
+    }
+
+    private func request(_ url: URL, method: String) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        if let pin { request.setValue(pin, forHTTPHeaderField: "X-EzKobo-PIN") }
+        return request
     }
 
     private func bookURL(_ name: String) -> URL {
@@ -124,7 +184,8 @@ struct KoboClient {
         guard let http = response as? HTTPURLResponse, http.statusCode >= 300 else { return }
         struct Failure: Decodable { let error: String }
         let message = (try? JSONDecoder().decode(Failure.self, from: data))?.error
-        throw KoboError(message: message ?? "The Kobo returned an error (\(http.statusCode)).")
+        throw KoboError(message: message ?? "The Kobo returned an error (\(http.statusCode)).",
+                        needsPIN: http.statusCode == 401)
     }
 }
 

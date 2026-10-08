@@ -28,7 +28,7 @@ final class KoboFinder: ObservableObject {
     }
 
     func client(for kobo: Kobo) async -> KoboClient? {
-        await url(for: kobo).map(KoboClient.init)
+        await url(for: kobo).map { KoboClient(base: $0, pin: PINStore.pin(for: kobo.id)) }
     }
 
     func refresh(_ kobo: Kobo) async {

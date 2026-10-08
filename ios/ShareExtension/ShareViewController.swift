@@ -69,6 +69,11 @@ final class ShareModel: ObservableObject {
             return
         }
         await transfers.send(files, to: client)
+        if transfers.needsPIN {
+            phase = .choosing
+            pinPrompt = kobo
+            return
+        }
         if let failure = transfers.failures.first {
             phase = .failed(failure)
         } else {
@@ -77,6 +82,23 @@ final class ShareModel: ObservableObject {
             try? await Task.sleep(for: .seconds(transfers.imported == false ? 4 : 1))
             finish(false)
         }
+    }
+
+    /// Set when a Kobo asked for a PIN; the view shows a PIN sheet.
+    @Published var pinPrompt: Kobo?
+
+    /// Checks the PIN; on success remembers it and sends. Returns an error message.
+    func unlock(_ kobo: Kobo, with pin: String) async -> String? {
+        guard var client = await finder.client(for: kobo) else { return "Couldn’t reach \(kobo.model)." }
+        client.pin = pin
+        do {
+            _ = try await client.books()
+        } catch {
+            return (error as? KoboError)?.needsPIN == true ? "That PIN isn’t right." : error.localizedDescription
+        }
+        PINStore.save(pin, for: kobo.id)
+        Task { await send(to: kobo) }
+        return nil
     }
 
     func cancel() { finish(true) }
@@ -164,6 +186,13 @@ struct ShareView: View {
             }
         }
         .task { await model.start() }
+        .sheet(item: $model.pinPrompt) { kobo in
+            PINEntryView(title: "Enter PIN",
+                         message: "\(kobo.model) has a PIN. You can see it under EzKobo status in the Kobo’s menu.",
+                         button: "Send") { pin in
+                await model.unlock(kobo, with: pin)
+            }
+        }
     }
 
     private var chooseSection: some View {

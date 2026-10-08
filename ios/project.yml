@@ -36,6 +36,10 @@ targets:
         CFBundleDisplayName: EzKobo
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    entitlements:
+      path: App/EzKobo.entitlements
+      properties: &keychain
+        keychain-access-groups: ["$(AppIdentifierPrefix)dev.ezkobo.shared"]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.ezkobo.app
@@ -63,6 +67,9 @@ targets:
               OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf"
               OR ANY $a.registeredTypeIdentifiers UTI-CONFORMS-TO "public.archive"
               ).@count >= 1).@count >= 1
+    entitlements:
+      path: ShareExtension/ShareExtension.entitlements
+      properties: *keychain
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.ezkobo.app.share

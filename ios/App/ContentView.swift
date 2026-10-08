@@ -8,6 +8,10 @@ struct ContentView: View {
     @State private var booksError: String?
     @State private var choosingFiles = false
     @State private var query = ""
+    @State private var showSettings = false
+    /// The Kobo that asked for a PIN, and the files to send once it's entered.
+    @State private var pinPrompt: Kobo?
+    @State private var pendingFiles: [URL] = []
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
 
@@ -41,6 +45,9 @@ struct ContentView: View {
             .refreshable { await reload() }
             .toolbar {
                 if selected != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Settings", systemImage: "gearshape") { showSettings = true }
+                    }
                     ToolbarItem(placement: .bottomBar) {
                         Button("Send to \(finder.info[selected!.id]?.model ?? selected!.model)") {
                             choosingFiles = true
@@ -56,6 +63,19 @@ struct ContentView: View {
                     Task { await send(files) }
                 }
             }
+            .sheet(isPresented: $showSettings, onDismiss: { Task { await loadBooks() } }) {
+                if let selected {
+                    SettingsView(kobo: selected, model: finder.info[selected.id]?.model ?? selected.model,
+                                 finder: finder)
+                }
+            }
+            .sheet(item: $pinPrompt) { kobo in
+                PINEntryView(title: "Enter PIN",
+                             message: "\(finder.info[kobo.id]?.model ?? kobo.model) has a PIN. You can see it under EzKobo status in the Kobo’s menu.",
+                             button: "Unlock") { pin in
+                    await unlock(kobo, with: pin)
+                }
+            }
         }
         .task { finder.start() }
         .task(id: selected?.id) { await loadBooks() }
@@ -65,7 +85,9 @@ struct ContentView: View {
     }
 
     private var filteredBooks: [Book] {
-        query.isEmpty ? books : books.filter { $0.name.localizedStandardContains(query) }
+        query.isEmpty ? books : books.filter {
+            $0.displayTitle.localizedStandardContains(query) || ($0.author ?? "").localizedStandardContains(query)
+        }
     }
 
     // MARK: Sections
@@ -110,6 +132,10 @@ struct ContentView: View {
             }
         } header: {
             Text("On \(finder.info[kobo.id]?.model ?? kobo.model)")
+        } footer: {
+            if books.contains(where: { $0.inLibrary == false }) {
+                Text(BookName.importHint)
+            }
         }
     }
 
@@ -177,14 +203,43 @@ struct ContentView: View {
         do {
             books = try await client.books()
             booksError = nil
+        } catch let error as KoboError where error.needsPIN {
+            books = []
+            booksError = "This Kobo has a PIN."
+            pinPrompt = kobo
         } catch {
             booksError = "Couldn’t load books from this Kobo."
         }
     }
 
+    /// Checks a PIN against the Kobo; on success remembers it, reloads, and
+    /// resumes a send that was waiting for it. Returns an error message.
+    private func unlock(_ kobo: Kobo, with pin: String) async -> String? {
+        guard var client = await finder.client(for: kobo) else { return "Couldn’t reach this Kobo." }
+        client.pin = pin
+        do {
+            _ = try await client.books()
+        } catch {
+            return (error as? KoboError)?.needsPIN == true ? "That PIN isn’t right." : error.localizedDescription
+        }
+        PINStore.save(pin, for: kobo.id)
+        await loadBooks()
+        if !pendingFiles.isEmpty {
+            let files = pendingFiles
+            pendingFiles = []
+            Task { await send(files) }
+        }
+        return nil
+    }
+
     private func send(_ files: [URL]) async {
         guard let kobo = selected, let client = await finder.client(for: kobo) else { return }
         await transfers.send(files, to: client, securityScoped: true)
+        if transfers.needsPIN {
+            pendingFiles = files
+            pinPrompt = kobo
+            return
+        }
         await loadBooks()
         await finder.refresh(kobo)
 
@@ -214,15 +269,30 @@ private struct BookRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title)
+            Text(book.displayTitle)
                 .lineLimit(2)
-            Text("\(format) · \(ByteCountFormatter.string(fromByteCount: book.size, countStyle: .file)) · \(book.date.formatted(.relative(presentation: .named)))")
+            Text(details)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if book.inLibrary == false {
+                Text("Not in library yet")
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
+            }
         }
         .padding(.vertical, 2)
     }
 
-    private var title: String { BookName.title(book.name) }
-    private var format: String { BookName.format(book.name) }
+    private var details: String {
+        var parts: [String] = []
+        if let author = book.author, !author.isEmpty { parts.append(author) }
+        parts.append(BookName.format(book.name))
+        if let progress = book.progress, progress > 0 {
+            parts.append("\(progress)% read")
+        } else {
+            parts.append(ByteCountFormatter.string(fromByteCount: book.size, countStyle: .file))
+        }
+        return parts.joined(separator: " · ")
+    }
 }
