@@ -29,7 +29,9 @@ func rescanLibrary(mode string) (string, error) {
 		return "off", nil
 	}
 	if q := qndb(); q != "" {
-		return "qndb", exec.Command(q, "-m", "pfmRescanBooksFull").Run()
+		// Not pfmRescanBooksFull: that imitates a USB connect/disconnect,
+		// which also starts a Kobo sync.
+		return "qndb", exec.Command(q, "-m", "pfmRescanBooks").Run()
 	}
 	return "none", errors.New("NickelDBus not installed")
 }
