@@ -46,7 +46,7 @@ struct KoboRow: View {
             DeviceGlyph(model: info?.model ?? kobo.model)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(info?.model ?? kobo.model)
+                    Text(info?.displayName.flatMap { $0.isEmpty ? nil : $0 } ?? info?.model ?? kobo.model)
                         .foregroundStyle(.primary)
                     if let serial = info?.serial, !serial.isEmpty {
                         Text(serial)

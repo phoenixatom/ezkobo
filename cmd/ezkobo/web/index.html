@@ -399,20 +399,24 @@ function batteryIcon(level, charging) {
   </svg>`;
 }
 
+// The name set in the app, or the model.
+const koboName = () => (info && (info.displayName || info.model)) || 'Kobo';
+
 function renderKobo() {
   const b = info.battery;
   $('kobo').innerHTML = `
     <div class="glyph">${deviceGlyph(info.model)}</div>
     <div class="grow">
-      <div class="one-line">${esc(info.model)}${info.serial ? `<span class="serial">${esc(info.serial)}</span>` : ''}${info.locked ? '<svg class="lock" width="12" height="14" viewBox="0 0 12 14" aria-label="PIN protected"><rect x="1" y="6" width="10" height="7.5" rx="1.5" fill="currentColor"/><path d="M3.2 6V4.2a2.8 2.8 0 0 1 5.6 0V6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>' : ''}</div>
+      <div class="one-line">${esc(koboName())}${info.serial ? `<span class="serial">${esc(info.serial)}</span>` : ''}${info.locked ? '<svg class="lock" width="12" height="14" viewBox="0 0 12 14" aria-label="PIN protected"><rect x="1" y="6" width="10" height="7.5" rx="1.5" fill="currentColor"/><path d="M3.2 6V4.2a2.8 2.8 0 0 1 5.6 0V6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>' : ''}</div>
       <div class="stats">
         ${b ? `<span class="battery">${batteryIcon(b.level, b.charging)} ${b.level}%</span>` : ''}
         <span>${size(info.free)} free</span>
         <span>${info.books === 1 ? '1 book' : info.books + ' books'}</span>
       </div>
     </div>`;
-  $('libraryTitle').textContent = 'On ' + info.model;
-  $('send').textContent = 'Send to ' + info.model;
+  $('libraryTitle').textContent = 'On ' + koboName();
+  $('send').textContent = 'Send to ' + koboName();
+  document.title = koboName() + ' · EzKobo';
   $('koboSection').hidden = $('librarySection').hidden = $('send').hidden = false;
   $('offline').hidden = true;
 }

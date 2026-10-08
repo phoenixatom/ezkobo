@@ -27,6 +27,12 @@ final class KoboFinder: ObservableObject {
         self.browser = browser
     }
 
+    /// The name set in Settings, or the model.
+    func name(of kobo: Kobo) -> String {
+        if let n = info[kobo.id]?.displayName, !n.isEmpty { return n }
+        return info[kobo.id]?.model ?? kobo.model
+    }
+
     func client(for kobo: Kobo) async -> KoboClient? {
         await url(for: kobo).map { KoboClient(base: $0, pin: PINStore.pin(for: kobo.id)) }
     }

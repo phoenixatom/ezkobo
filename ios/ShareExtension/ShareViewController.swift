@@ -65,7 +65,7 @@ final class ShareModel: ObservableObject {
         phase = .sending
         UserDefaults.standard.set(kobo.id, forKey: Self.lastKoboKey)
         guard let client = await finder.client(for: kobo) else {
-            phase = .failed("Couldn’t reach \(kobo.model).")
+            phase = .failed("Couldn’t reach \(finder.name(of: kobo)).")
             return
         }
         await transfers.send(files, to: client)
@@ -89,7 +89,7 @@ final class ShareModel: ObservableObject {
 
     /// Checks the PIN; on success remembers it and sends. Returns an error message.
     func unlock(_ kobo: Kobo, with pin: String) async -> String? {
-        guard var client = await finder.client(for: kobo) else { return "Couldn’t reach \(kobo.model)." }
+        guard var client = await finder.client(for: kobo) else { return "Couldn’t reach \(finder.name(of: kobo))." }
         client.pin = pin
         do {
             _ = try await client.books()
@@ -188,7 +188,7 @@ struct ShareView: View {
         .task { await model.start() }
         .sheet(item: $model.pinPrompt) { kobo in
             PINEntryView(title: "Enter PIN",
-                         message: "\(kobo.model) has a PIN. You can see it under EzKobo status in the Kobo’s menu.",
+                         message: "\(finder.name(of: kobo)) has a PIN. You can see it under EzKobo status in the Kobo’s menu.",
                          button: "Send") { pin in
                 await model.unlock(kobo, with: pin)
             }
@@ -224,7 +224,7 @@ struct ShareView: View {
             }
         } header: {
             if let target = model.target {
-                Text(model.phase == .done ? "Sent to \(target.model)" : "Sending to \(target.model)")
+                Text(model.phase == .done ? "Sent to \(finder.name(of: target))" : "Sending to \(finder.name(of: target))")
             }
         } footer: {
             if transfers.imported == false {
