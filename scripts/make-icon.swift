@@ -1,52 +1,32 @@
-// Draws the app icon: swift scripts/make-icon.swift ios/App/Assets.xcassets/AppIcon.appiconset/icon.png
+// Draws the app icon from the mascot:
+// swift scripts/make-icon.swift ios/App/Assets.xcassets/Mascot.imageset/mascot.png ios/App/Assets.xcassets/AppIcon.appiconset/icon.png
 import CoreGraphics
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
+let args = CommandLine.arguments
 let size = 1024
 let space = CGColorSpaceCreateDeviceRGB()
 let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
-                    space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+                    space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CGColor { CGColor(colorSpace: space, components: [r, g, b, 1])! }
 
-func color(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> CGColor {
-    CGColor(colorSpace: space, components: [r, g, b, a])!
-}
-func rounded(_ rect: CGRect, _ radius: CGFloat) -> CGPath {
-    CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
-}
-
-// Background: deep green with a subtle vertical gradient.
-let gradient = CGGradient(colorsSpace: space, colors: [color(0.20, 0.42, 0.36), color(0.12, 0.29, 0.25)] as CFArray,
-                          locations: [0, 1])!
+// Warm cream gradient, lighter at the top.
+let gradient = CGGradient(colorsSpace: space, colors: [color(0.99, 0.97, 0.92), color(0.95, 0.90, 0.80)] as CFArray, locations: [0, 1])!
 ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: 1024), end: .zero, options: [])
 
-// E-reader body outline.
-ctx.addPath(rounded(CGRect(x: 292, y: 212, width: 440, height: 600), 64))
-ctx.setStrokeColor(color(1, 1, 1))
-ctx.setLineWidth(36)
-ctx.strokePath()
+// The mascot, large and slightly low, so its ears and face read at small sizes.
+let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[1]) as CFURL, nil)!
+let mascot = CGImageSourceCreateImageAtIndex(src, 0, nil)!
+let height: CGFloat = 900
+let width = height * CGFloat(mascot.width) / CGFloat(mascot.height)
+ctx.draw(mascot, in: CGRect(x: (1024 - width) / 2, y: -40, width: width, height: height))
 
-// Screen.
-ctx.addPath(rounded(CGRect(x: 342, y: 266, width: 288, height: 492), 14))
-ctx.setFillColor(color(1, 1, 1, 0.94))
-ctx.fillPath()
-
-// Page-turn buttons.
-ctx.setFillColor(color(1, 1, 1))
-for y in [462.0, 538.0] {
-    ctx.addPath(rounded(CGRect(x: 664, y: y, width: 18, height: 52), 9))
-}
-ctx.fillPath()
-
-// Lines of text.
-ctx.setFillColor(color(0.16, 0.35, 0.30, 0.5))
-for (i, w) in [208.0, 230, 190, 222, 160].enumerated() {
-    ctx.addPath(rounded(CGRect(x: 382, y: 680 - Double(i) * 62, width: w, height: 22), 11))
-}
-ctx.fillPath()
-
-let url = URL(fileURLWithPath: CommandLine.arguments[1]) as CFURL
-let dest = CGImageDestinationCreateWithURL(url, UTType.png.identifier as CFString, 1, nil)!
-CGImageDestinationAddImage(dest, ctx.makeImage()!, nil)
+// Flatten onto an opaque image (App Store icons can't have transparency).
+let out = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+                    space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+out.draw(ctx.makeImage()!, in: CGRect(x: 0, y: 0, width: size, height: size))
+let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: args[2]) as CFURL, UTType.png.identifier as CFString, 1, nil)!
+CGImageDestinationAddImage(dest, out.makeImage()!, nil)
 CGImageDestinationFinalize(dest)
