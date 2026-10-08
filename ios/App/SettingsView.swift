@@ -62,11 +62,20 @@ struct SettingsView: View {
         Section {
             Toggle("Convert to KEPUB", isOn: binding(\.kepub))
             Toggle("Fix Missing Details", isOn: binding(\.metadata))
+            if current.metadata {
+                NavigationLink {
+                    SourcesView(settings: Binding { self.settings ?? current } set: { self.settings = $0 },
+                                save: save, setSecret: setSecret)
+                } label: {
+                    LabeledContent("Details Sources",
+                                   value: current.providers.first(where: \.enabled)?.name ?? "None")
+                }
+            }
             Toggle("Rename as Author – Title", isOn: binding(\.cleanNames))
         } header: {
             Text("When Books Arrive")
         } footer: {
-            Text("KEPUB is Kobo’s own format: faster page turns and reading stats. Fix Missing Details looks up the title, author and cover on Open Library or Google Books when a book’s own details are missing or messy, which sends the title and author to those services.")
+            Text("KEPUB is Kobo’s own format: faster page turns and reading stats. Fix Missing Details looks up the title, author and cover when a book’s own details are missing or messy, which sends the title and author to the sources you choose.")
         }
     }
 
@@ -107,6 +116,18 @@ struct SettingsView: View {
             error = nil
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    /// Stores a key or token on the Kobo. Returns an error message, or nil.
+    private func setSecret(_ field: String, _ value: String) async -> String? {
+        guard let client = await finder.client(for: kobo) else { return "Couldn’t reach this Kobo." }
+        do {
+            try await client.setSecret(field, to: value)
+            settings = try await client.settings()
+            return nil
+        } catch {
+            return error.localizedDescription
         }
     }
 

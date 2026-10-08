@@ -48,7 +48,7 @@ func processBook(ctx context.Context, st settings, tmp, name string) processed {
 	}
 
 	if st.Metadata || st.CleanNames {
-		if fixed, source := fixMetadata(ctx, meta, name, st.Metadata); fixed != nil {
+		if fixed, source := fixMetadata(ctx, meta, name, st); fixed != nil {
 			if err := writeEPUBMeta(tmp, fixed); err != nil {
 				log.Printf("ezkobo: %s: writing metadata: %v", name, err)
 			} else {
@@ -264,7 +264,8 @@ func cleanText(s string) string {
 // fixMetadata returns improved metadata, or nil if nothing changed. With
 // online set, it looks the book up (Google Books, then Open Library) when
 // the title or author is missing or messy, or the book has no cover.
-func fixMetadata(ctx context.Context, m *epubMeta, fileName string, online bool) (*epubMeta, string) {
+func fixMetadata(ctx context.Context, m *epubMeta, fileName string, st settings) (*epubMeta, string) {
+	online := st.Metadata
 	fixed := *m
 	source := ""
 
@@ -294,7 +295,7 @@ func fixMetadata(ctx context.Context, m *epubMeta, fileName string, online bool)
 	if online && needsLookup && fixed.Title != "" {
 		lctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		defer cancel()
-		if r, src := lookupBook(lctx, fixed.Title, fixed.Author); r != nil {
+		if r, src := lookupBook(lctx, fixed.Title, fixed.Author, st); r != nil {
 			// Covers redirect a few times and can take several seconds.
 			cctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 			defer cancel()
@@ -363,20 +364,117 @@ var httpClient = &http.Client{Timeout: 12 * time.Second}
 
 const userAgent = "EzKobo (+https://github.com/phoenixatom/ezkobo)"
 
-// lookupBook tries Open Library first: it needs no key and has no shared
-// quota. Keyless Google Books requests share a public daily quota that is
-// often used up, so Google is only a fallback.
-func lookupBook(ctx context.Context, title, author string) (*bookInfo, string) {
-	if b := lookupOpenLibrary(ctx, title, author); b != nil {
-		return b, "openlibrary"
-	}
-	if b := lookupGoogle(ctx, title, author); b != nil {
-		return b, "google"
+// lookupBook asks each enabled provider in the user's order and returns the
+// first good match.
+func lookupBook(ctx context.Context, title, author string, st settings) (*bookInfo, string) {
+	for _, p := range st.Providers {
+		if !p.Enabled || ctx.Err() != nil {
+			continue
+		}
+		var b *bookInfo
+		switch p.ID {
+		case "apple":
+			b = lookupApple(ctx, title, author)
+		case "openlibrary":
+			b = lookupOpenLibrary(ctx, title, author)
+		case "google":
+			b = lookupGoogle(ctx, title, author, st.GoogleAPIKey)
+		case "hardcover":
+			if st.HardcoverToken != "" {
+				b = lookupHardcover(ctx, title, author, st.HardcoverToken)
+			}
+		}
+		if b != nil {
+			return b, p.ID
+		}
 	}
 	return nil, ""
 }
 
-func lookupGoogle(ctx context.Context, title, author string) *bookInfo {
+// firstAuthor keeps the main author from lists like "Asako Yuzuki & Polly
+// Barton" (translators are often listed too).
+func firstAuthor(s string) string {
+	s, _, _ = strings.Cut(s, " & ")
+	s, _, _ = strings.Cut(s, ",")
+	return strings.TrimSpace(s)
+}
+
+// lookupApple uses the iTunes Search API's ebook catalogue (Apple Books).
+func lookupApple(ctx context.Context, title, author string) *bookInfo {
+	v := url.Values{"media": {"ebook"}, "entity": {"ebook"}, "limit": {"5"}, "term": {strings.TrimSpace(title + " " + author)}}
+	var res struct {
+		Results []struct {
+			Title   string `json:"trackName"`
+			Artist  string `json:"artistName"`
+			Artwork string `json:"artworkUrl100"`
+		} `json:"results"`
+	}
+	if getJSON(ctx, "https://itunes.apple.com/search?"+v.Encode(), &res) != nil {
+		return nil
+	}
+	for _, r := range res.Results {
+		if !sameTitle(title, r.Title) {
+			continue
+		}
+		b := &bookInfo{Title: r.Title, Author: firstAuthor(r.Artist)}
+		if r.Artwork != "" {
+			b.CoverURL = strings.Replace(r.Artwork, "100x100bb", "1000x1000bb", 1)
+		}
+		return b
+	}
+	return nil
+}
+
+// lookupHardcover uses Hardcover's GraphQL search (needs an API token).
+func lookupHardcover(ctx context.Context, title, author, token string) *bookInfo {
+	body, _ := json.Marshal(map[string]any{
+		"query":     `query ($q: String!) { search(query: $q, query_type: "Book", per_page: 5, page: 1) { results } }`,
+		"variables": map[string]string{"q": strings.TrimSpace(title + " " + author)},
+	})
+	req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.hardcover.app/v1/graphql", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var res struct {
+		Data struct {
+			Search struct {
+				Results struct {
+					Hits []struct {
+						Document struct {
+							Title       string   `json:"title"`
+							AuthorNames []string `json:"author_names"`
+							Image       struct {
+								URL string `json:"url"`
+							} `json:"image"`
+						} `json:"document"`
+					} `json:"hits"`
+				} `json:"results"`
+			} `json:"search"`
+		} `json:"data"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&res) != nil {
+		return nil
+	}
+	for _, h := range res.Data.Search.Results.Hits {
+		d := h.Document
+		if !sameTitle(title, d.Title) {
+			continue
+		}
+		b := &bookInfo{Title: d.Title, CoverURL: d.Image.URL}
+		if len(d.AuthorNames) > 0 {
+			b.Author = d.AuthorNames[0]
+		}
+		return b
+	}
+	return nil
+}
+
+func lookupGoogle(ctx context.Context, title, author, key string) *bookInfo {
 	q := "intitle:" + title
 	if author != "" {
 		q += " inauthor:" + author
@@ -393,7 +491,11 @@ func lookupGoogle(ctx context.Context, title, author string) *bookInfo {
 			} `json:"volumeInfo"`
 		} `json:"items"`
 	}
-	if getJSON(ctx, "https://www.googleapis.com/books/v1/volumes?maxResults=5&q="+url.QueryEscape(q), &res) != nil {
+	u := "https://www.googleapis.com/books/v1/volumes?maxResults=5&q=" + url.QueryEscape(q)
+	if key != "" {
+		u += "&key=" + url.QueryEscape(key)
+	}
+	if getJSON(ctx, u, &res) != nil {
 		return nil
 	}
 	for _, it := range res.Items {

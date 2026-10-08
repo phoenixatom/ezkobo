@@ -34,6 +34,26 @@ struct KoboSettings: Codable, Hashable {
     var kepub: Bool
     var metadata: Bool
     var cleanNames: Bool
+    /// Where to look up book details, in order.
+    var providers: [DetailsProvider]
+    /// Whether keys are stored on the Kobo; the keys themselves are never sent back.
+    var googleApiKeySet: Bool
+    var hardcoverTokenSet: Bool
+}
+
+struct DetailsProvider: Codable, Hashable, Identifiable {
+    let id: String
+    var enabled: Bool
+
+    var name: String {
+        switch id {
+        case "apple": "Apple Books"
+        case "openlibrary": "Open Library"
+        case "google": "Google Books"
+        case "hardcover": "Hardcover"
+        default: id
+        }
+    }
 }
 
 /// What the Kobo did with an uploaded book.
@@ -140,6 +160,11 @@ struct KoboClient {
 
     func save(_ settings: KoboSettings) async throws {
         try await send("api/settings", method: "PUT", body: settings)
+    }
+
+    /// Stores (or with "" removes) a secret setting: "googleApiKey" or "hardcoverToken".
+    func setSecret(_ field: String, to value: String) async throws {
+        try await send("api/settings", method: "PUT", body: [field: value])
     }
 
     /// Sets or changes the PIN. Requests must already carry the current PIN, if any.

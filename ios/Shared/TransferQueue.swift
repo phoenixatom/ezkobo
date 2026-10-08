@@ -74,8 +74,10 @@ final class TransferQueue: ObservableObject {
         var parts: [String] = []
         if result.converted == true { parts.append("Converted to KEPUB") }
         switch result.metadata {
+        case "apple": parts.append("Details from Apple Books")
         case "openlibrary": parts.append("Details from Open Library")
         case "google": parts.append("Details from Google Books")
+        case "hardcover": parts.append("Details from Hardcover")
         case "cleaned": parts.append("Name cleaned up")
         default: break
         }

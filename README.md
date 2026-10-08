@@ -34,7 +34,8 @@ already have:
   titles, authors and reading progress, and see which books haven't been
   imported yet.
 - **Private by design.** Books go phone → your Wi‑Fi → Kobo, never through a
-  cloud. The optional details lookup sends only a book's title and author.
+  cloud. The optional details lookup sends only a book's title and author, to
+  the sources you pick: Apple Books, Open Library, Google Books or Hardcover.
 - **Optional PIN.** Keep others on your Wi‑Fi from seeing or changing your
   books.
 - **No app? Use a browser.** Every Kobo also serves the same view at
@@ -149,7 +150,8 @@ on the Kobo, so they also apply to the Share sheet and the browser page.
 | Setting | Default | What it does |
 |---|---|---|
 | Convert to KEPUB | On | Converts EPUBs to Kobo's KEPUB format |
-| Fix Missing Details | On | When a book's title or author is missing or messy (or it has no cover), looks it up on Open Library, then Google Books. Sends the title and author to those services |
+| Fix Missing Details | On | When a book's title or author is missing or messy (or it has no cover), looks it up online. Sends the title and author to the sources below |
+| Details Sources | Apple Books, Open Library, Google Books | Which services to ask, in what order (drag to reorder). Google Books works best with your own API key; Hardcover needs a token |
 | Rename as Author – Title | On | Names files "Author - Title.kepub.epub" |
 | PIN | Off | Requires a 4–8 digit PIN to see, send or delete books |
 

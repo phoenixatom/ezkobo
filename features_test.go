@@ -138,6 +138,49 @@ func TestPIN(t *testing.T) {
 	}
 }
 
+func TestSettingsKeepGoogleKeySecret(t *testing.T) {
+	s := &server{cfg: config{stateDir: t.TempDir()}}
+	put := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		s.putSettings(w, httptest.NewRequest("PUT", "/api/settings", strings.NewReader(body)))
+		return w
+	}
+	if w := put(`{"googleApiKey":"AIzaSyExampleKey123"}`); w.Code != 200 || strings.Contains(w.Body.String(), "AIza") {
+		t.Fatalf("put key: %d %s", w.Code, w.Body)
+	}
+	if st := s.loadSettings(); st.GoogleAPIKey != "AIzaSyExampleKey123" || !st.Kepub {
+		t.Fatalf("stored settings = %+v", st)
+	}
+	// Changing another setting leaves the key alone.
+	put(`{"kepub":false}`)
+	if st := s.loadSettings(); st.GoogleAPIKey == "" || st.Kepub {
+		t.Fatalf("after toggling kepub: %+v", st)
+	}
+	w := httptest.NewRecorder()
+	s.getSettings(w, httptest.NewRequest("GET", "/api/settings", nil))
+	if strings.Contains(w.Body.String(), "AIza") || !strings.Contains(w.Body.String(), `"googleApiKeySet":true`) {
+		t.Fatalf("get leaked key or missing flag: %s", w.Body)
+	}
+	put(`{"googleApiKey":""}`)
+	if s.loadSettings().GoogleAPIKey != "" {
+		t.Fatal("key not removed")
+	}
+	if w := put(`{"googleApiKey":"bad key/with?stuff"}`); w.Code != 400 {
+		t.Fatalf("bad key accepted: %d", w.Code)
+	}
+}
+
+func TestProviderOrder(t *testing.T) {
+	got := normalizeProviders([]provider{{"google", false}, {"bogus", true}, {"apple", true}, {"google", true}})
+	ids := []string{}
+	for _, p := range got {
+		ids = append(ids, p.ID)
+	}
+	if strings.Join(ids, ",") != "google,apple,openlibrary,hardcover" || got[0].Enabled || got[3].Enabled {
+		t.Fatalf("providers = %+v", got)
+	}
+}
+
 func TestKoboLibrary(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "lib")
@@ -171,10 +214,12 @@ func TestLiveMetadataLookup(t *testing.T) {
 	tmp := filepath.Join(dir, "upload.part")
 	name := "Butter (Asako Yuzuki, Polly Barton (translator)) (example.org, mirror.net).epub"
 	makeEPUB(t, tmp, strings.TrimSuffix(name, ".epub"), "")
-	res := processBook(context.Background(), defaultSettings, tmp, name)
+	st := defaultSettings
+	st.Providers = normalizeProviders(nil)
+	res := processBook(context.Background(), st, tmp, name)
 	m, _ := readEPUBMeta(tmp)
 	t.Logf("result %+v, title %q, author %q, cover %v", res, m.Title, m.Author, m.HasCover)
-	if res.Metadata != "google" && res.Metadata != "openlibrary" {
+	if res.Metadata == "" || res.Metadata == "cleaned" {
 		t.Fatalf("no online match: %+v", res)
 	}
 	if !m.HasCover {
