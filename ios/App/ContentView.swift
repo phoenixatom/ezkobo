@@ -269,12 +269,12 @@ struct ContentView: View {
                 }
             }
             .labelStyle(StatusLabelStyle())
-            .font(.subheadline)
+            .font(.footnote)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             Text(plainSubtitle)
-                .font(.subheadline)
+                .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
