@@ -218,11 +218,18 @@ struct ContentView: View {
                     ContinueReadingCard(client: client, book: current)
                 }
                 .buttonStyle(.plain)
+                .contextMenu {
+                    Button("Hide from Reading", systemImage: "eye.slash") {
+                        Task { await hide(current) }
+                    }
+                }
 
                 if summary.reading.count > 1 {
                     HomeSectionTitle("Also Reading")
                         .padding(.top, 12)
-                    ReadingShelf(client: client, books: Array(summary.reading.dropFirst()))
+                    ReadingShelf(client: client, books: Array(summary.reading.dropFirst())) { book in
+                        Task { await hide(book) }
+                    }
                 }
             } else {
                 MascotMessage(image: "MascotReading", title: "Nothing in Progress",
@@ -387,6 +394,20 @@ struct ContentView: View {
         try? await Task.sleep(for: .seconds(3))
         if transfers.items.map(\.id) == batch {
             withAnimation { transfers.clear() }
+        }
+    }
+
+    /// Hides a book from the reading lists on this Kobo (it isn't deleted;
+    /// bring it back in Settings).
+    private func hide(_ book: ReadingBook) async {
+        guard let client else { return }
+        let ids = (summary?.hidden ?? []).map(\.id) + [book.id]
+        do {
+            try await client.setHidden(ids)
+            withAnimation { summary = nil }
+            await loadBooks()
+        } catch {
+            booksError = error.localizedDescription
         }
     }
 

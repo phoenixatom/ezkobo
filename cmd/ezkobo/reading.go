@@ -35,8 +35,8 @@ func (s *server) present(b kobo.Book) readingBook {
 	return rb
 }
 
-// reading reports what's being read now, recently finished books, and
-// totals for the whole library.
+// reading reports what's being read now (minus books hidden in the app),
+// recently finished books, and totals for the whole library.
 func (s *server) reading(w http.ResponseWriter, r *http.Request) {
 	books, err := kobo.Books(s.cfg.db, "")
 	if err != nil {
@@ -50,15 +50,24 @@ func (s *server) reading(w http.ResponseWriter, r *http.Request) {
 		NotStarted  int `json:"notStarted"`
 		SecondsRead int `json:"secondsRead"`
 	}
+	hidden := map[string]bool{}
+	for _, id := range s.loadSettings().Hidden {
+		hidden[id] = true
+	}
 	var st stats
-	var now, finished, timed []readingBook
+	var now, finished, timed, hiddenBooks []readingBook
 	for _, b := range books {
+		if hidden[b.ID] {
+			hiddenBooks = append(hiddenBooks, s.present(b))
+		}
 		st.Books++
 		st.SecondsRead += b.SecondsRead
 		switch b.Status {
 		case 1:
 			st.Reading++
-			now = append(now, s.present(b))
+			if !hidden[b.ID] { // still counted, just not listed
+				now = append(now, s.present(b))
+			}
 		case 2:
 			st.Finished++
 			finished = append(finished, s.present(b))
@@ -78,6 +87,7 @@ func (s *server) reading(w http.ResponseWriter, r *http.Request) {
 		"reading":  orEmpty(now),
 		"finished": orEmpty(finished[:min(len(finished), 20)]),
 		"byTime":   orEmpty(timed[:min(len(timed), 20)]),
+		"hidden":   orEmpty(hiddenBooks),
 		"stats":    st,
 	})
 }

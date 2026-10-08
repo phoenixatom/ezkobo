@@ -26,6 +26,8 @@ type Options struct {
 	Providers []Provider `json:"providers"`
 	// Name shown in the app, e.g. "Atom's Libra". Empty means automatic.
 	Name string `json:"name,omitempty"`
+	// Books (library IDs) hidden from the app's reading lists.
+	Hidden []string `json:"hidden,omitempty"`
 	// Optional Google Books API key; keyless requests share a public daily
 	// quota that is often used up. Never sent back to clients.
 	GoogleAPIKey string `json:"googleApiKey,omitempty"`

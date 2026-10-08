@@ -45,6 +45,8 @@ struct ReadingSummary: Decodable {
     let finished: [ReadingBook]
     let byTime: [ReadingBook]
     let stats: ReadingStats
+    /// Books hidden from the reading lists (nil from older agents).
+    let hidden: [ReadingBook]?
 }
 
 struct Highlight: Decodable, Hashable, Identifiable {

@@ -137,3 +137,16 @@ func TestSettingsKeepGoogleKeySecret(t *testing.T) {
 		t.Fatalf("bad key accepted: %d", w.Code)
 	}
 }
+
+func TestSettingsHidden(t *testing.T) {
+	s := &server{cfg: config{stateDir: t.TempDir()}}
+	w := httptest.NewRecorder()
+	s.putSettings(w, httptest.NewRequest("PUT", "/api/settings", strings.NewReader(`{"hidden":["book-1","book-2"]}`)))
+	if got := s.loadSettings().Hidden; len(got) != 2 || got[0] != "book-1" {
+		t.Fatalf("hidden = %v (%d %s)", got, w.Code, w.Body)
+	}
+	s.putSettings(httptest.NewRecorder(), httptest.NewRequest("PUT", "/api/settings", strings.NewReader(`{"kepub":false}`)))
+	if got := s.loadSettings().Hidden; len(got) != 2 {
+		t.Fatalf("hidden list lost when changing another setting: %v", got)
+	}
+}

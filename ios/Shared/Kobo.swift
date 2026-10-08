@@ -35,6 +35,8 @@ struct KoboInfo: Decodable, Hashable {
 struct KoboSettings: Codable, Hashable {
     /// Custom name; empty means automatic.
     var name: String?
+    /// Library IDs hidden from the app's reading lists.
+    var hidden: [String]?
     var kepub: Bool
     var metadata: Bool
     var cleanNames: Bool
@@ -43,6 +45,19 @@ struct KoboSettings: Codable, Hashable {
     /// Whether keys are stored on the Kobo; the keys themselves are never sent back.
     var googleApiKeySet: Bool
     var hardcoverTokenSet: Bool
+
+    /// Only the editable fields are sent back. The hidden list changes through
+    /// `setHidden`, so a stale copy here can never undo a hide or unhide.
+    private enum EncodedKeys: String, CodingKey { case name, kepub, metadata, cleanNames, providers }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: EncodedKeys.self)
+        try c.encode(name ?? "", forKey: .name)
+        try c.encode(kepub, forKey: .kepub)
+        try c.encode(metadata, forKey: .metadata)
+        try c.encode(cleanNames, forKey: .cleanNames)
+        try c.encode(providers, forKey: .providers)
+    }
 }
 
 struct DetailsProvider: Codable, Hashable, Identifiable {
@@ -186,6 +201,11 @@ struct KoboClient {
 
     func save(_ settings: KoboSettings) async throws {
         try await send("api/settings", method: "PUT", body: settings)
+    }
+
+    /// Replaces the list of books hidden from the reading lists.
+    func setHidden(_ ids: [String]) async throws {
+        try await send("api/settings", method: "PUT", body: ["hidden": ids])
     }
 
     /// Stores (or with "" removes) a secret setting: "googleApiKey" or "hardcoverToken".

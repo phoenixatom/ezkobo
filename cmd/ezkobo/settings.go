@@ -119,6 +119,7 @@ func publicSettings(st settings) map[string]any {
 		"metadata":          st.Metadata,
 		"cleanNames":        st.CleanNames,
 		"name":              st.Name,
+		"hidden":            orEmpty(st.Hidden),
 		"providers":         st.Providers,
 		"googleApiKeySet":   st.GoogleAPIKey != "",
 		"hardcoverTokenSet": st.HardcoverToken != "",
@@ -137,6 +138,7 @@ func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 		Metadata       *bool            `json:"metadata"`
 		CleanNames     *bool            `json:"cleanNames"`
 		Name           *string          `json:"name"`
+		Hidden         *[]string        `json:"hidden"`
 		Providers      *[]book.Provider `json:"providers"`
 		GoogleAPIKey   *string          `json:"googleApiKey"`
 		HardcoverToken *string          `json:"hardcoverToken"`
@@ -162,6 +164,9 @@ func (s *server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		st.Name = name
+	}
+	if req.Hidden != nil {
+		st.Hidden = *req.Hidden
 	}
 	if req.Providers != nil {
 		st.Providers = book.NormalizeProviders(*req.Providers)

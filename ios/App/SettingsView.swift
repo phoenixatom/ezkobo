@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var settings: KoboSettings?
+    @State private var hiddenBooks: [ReadingBook] = []
     @State private var hasPIN = false
     @State private var error: String?
     @State private var pinSheet: PINAction?
@@ -31,6 +32,9 @@ struct SettingsView: View {
                 if let settings {
                     nameSection(settings)
                     arrivalSection(settings)
+                    if !hiddenBooks.isEmpty {
+                        hiddenSection
+                    }
                     pinSection
                 } else if error == nil {
                     ProgressView().frame(maxWidth: .infinity)
@@ -100,6 +104,40 @@ struct SettingsView: View {
         }
     }
 
+    private var hiddenSection: some View {
+        Section {
+            ForEach(hiddenBooks) { book in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(book.title).lineLimit(1)
+                        if let author = book.author, !author.isEmpty {
+                            Text(author).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    Button("Show") { Task { await unhide(book) } }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+        } header: {
+            Text("Hidden from Reading")
+        } footer: {
+            Text("These books aren’t shown in Continue Reading. They’re still on the Kobo.")
+        }
+    }
+
+    private func unhide(_ book: ReadingBook) async {
+        guard let client = await finder.client(for: kobo) else { return }
+        let remaining = hiddenBooks.filter { $0.id != book.id }
+        do {
+            try await client.setHidden(remaining.map(\.id))
+            withAnimation { hiddenBooks = remaining }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     private var pinSection: some View {
         Section {
             if hasPIN {
@@ -134,6 +172,7 @@ struct SettingsView: View {
         do {
             settings = try await client.settings()
             hasPIN = finder.info[kobo.id]?.locked == true
+            hiddenBooks = (try? await client.reading())?.hidden ?? []
             error = nil
         } catch {
             self.error = error.localizedDescription

@@ -82,6 +82,7 @@ struct ContinueReadingCard: View {
 struct ReadingShelf: View {
     let client: KoboClient?
     let books: [ReadingBook]
+    var hide: (ReadingBook) -> Void = { _ in }
 
     var body: some View {
         ScrollView(.horizontal) {
@@ -103,6 +104,9 @@ struct ReadingShelf: View {
                         .frame(width: 84)
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Hide from Reading", systemImage: "eye.slash") { hide(book) }
+                    }
                 }
             }
             .padding(.horizontal, 20)
