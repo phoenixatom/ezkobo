@@ -155,9 +155,9 @@ on the Kobo, so they also apply to the Share sheet and the browser page.
 | Rename as Author – Title | On | Names files "Author - Title.kepub.epub" |
 | PIN | Off | Requires a 4–8 digit PIN to see, send or delete books |
 
-Optional: with [NickelDBus](https://github.com/shermp/NickelDBus) installed,
-step 3 happens by itself. This is untested, and NickelDBus's author has noted
-it may not work on Colour models.
+With [NickelDBus](https://github.com/shermp/NickelDBus) 0.2.0 installed,
+step 3 happens by itself: the book appears in the library as soon as it
+arrives. Confirmed on a Clara Colour (firmware 4.45).
 
 ## Compatibility with other mods
 
